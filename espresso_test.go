@@ -3,10 +3,12 @@ package expresso_test
 import (
 	"bytes"
 	"fmt"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"reflect"
+	"strconv"
 	"testing"
 
 	"github.com/interactiv/expect"
@@ -21,7 +23,7 @@ func TestHelloWord(t *testing.T) {
 		req *http.Request
 		err error
 	)
-	app := expresso.App()
+	app := expresso.New()
 	app.Get("/hello/:name", func(ctx *expresso.Context, rw http.ResponseWriter) {
 		fmt.Fprintf(rw, "Hello %s", ctx.Request.Params["name"])
 	})
@@ -36,7 +38,7 @@ func TestHelloWord(t *testing.T) {
 
 func TestPost(t *testing.T) {
 
-	app := expresso.App()
+	app := expresso.New()
 	app.Get("/feedback", func() {
 		t.Fatalf("GET /feedback shouldn't be called on POST /feedback request")
 	})
@@ -61,7 +63,7 @@ func TestPost(t *testing.T) {
 
 func TestPut(t *testing.T) {
 
-	app := expresso.App()
+	app := expresso.New()
 	id := "10"
 	e := expect.New(t)
 	app.Put("/blog/:id", func(ctx *expresso.Context) {
@@ -75,7 +77,7 @@ func TestPut(t *testing.T) {
 
 func TestDelete(t *testing.T) {
 
-	app := expresso.App()
+	app := expresso.New()
 	category := "food"
 	id := "200"
 	e := expect.New(t)
@@ -92,7 +94,7 @@ func TestDelete(t *testing.T) {
 
 func TestMatch(t *testing.T) {
 	e := expect.New(t)
-	app := expresso.App()
+	app := expresso.New()
 	app.Match("/foo", func(rw http.ResponseWriter) {
 		rw.WriteHeader(http.StatusOK)
 	}).SetMethods([]string{"GET", "POST"})
@@ -120,6 +122,33 @@ func TestMatch(t *testing.T) {
 	e.Expect(err).ToBeNil()
 	defer res.Body.Close()
 	e.Expect(res.StatusCode).ToEqual(http.StatusOK)
+}
+
+func TestConvert(t *testing.T) {
+
+	e := expect.New(t)
+	app := expresso.New()
+	app.Get("/person/:person", func(ctx *expresso.Context, rw http.ResponseWriter) {
+		var person *Person
+		log.Println(ctx.Request.Params)
+		person = ctx.Request.Params["person"].(*Person)
+		fmt.Fprintf(rw, "%s", person.name)
+		e.Expect(person).Not().ToBeNil()
+		t.Log(person)
+	}).Convert("person", func(person string, r *http.Request) *Person {
+		id, err := strconv.Atoi(person)
+		if err != nil {
+			return nil
+		}
+		return PersonRepository.Find(id)
+	})
+	t.Log(app.RouteCollection.Routes)
+	server := httptest.NewServer(app)
+	defer server.Close()
+	response, err := http.Get(server.URL + "/person/0")
+	e.Expect(err).ToBeNil()
+	defer response.Body.Close()
+	e.Expect(response.StatusCode).ToBe(200)
 }
 
 func TestIsCallable(t *testing.T) {
@@ -164,3 +193,29 @@ func (f Foo) Call() string {
 type Caller interface {
 	Call() string
 }
+
+type Person struct {
+	id   int
+	name string
+}
+
+func (p Person) Find(id int) *Person {
+	var (
+		person           *Person
+		personRepository = []*Person{
+			&Person{id: 0, name: "James"},
+			&Person{id: 1, name: "Frank"},
+		}
+	)
+	for _, p := range personRepository {
+		if p.id == id {
+			person = p
+			break
+		}
+	}
+	return person
+}
+
+var (
+	PersonRepository Person
+)

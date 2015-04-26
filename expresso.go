@@ -33,11 +33,13 @@ type Expresso struct {
 }
 
 // App creates an expresso application
-func App() *Expresso {
-	return &Expresso{
+func New() *Expresso {
+	expresso := &Expresso{
 		RouteCollection: &RouteCollection{Routes: []*Route{}},
 		injector:        NewInjector(),
 	}
+	expresso.injector.Register(expresso)
+	return expresso
 }
 
 // Boot boots the application
@@ -71,15 +73,27 @@ func (e *Expresso) ServeHTTP(responseWriter http.ResponseWriter, request *http.R
 	}
 
 	context := NewContext(request)
+	injector := NewInjector(request, responseWriter, context)
+	injector.SetParent(e.Injector())
+	defer func() { context = nil; injector = nil }()
+
 	for i, matchedParam := range match.pattern.FindStringSubmatch(request.URL.Path)[1:] {
 		context.Request.Params[match.params[i]] = matchedParam
 	}
+	// Apply request parameter converters
+	for key, value := range context.Request.Params {
+		if match.converters[key] != nil {
+			converterInjector := NewInjector(value)
+			converterInjector.SetParent(injector)
+			res, err := converterInjector.Apply(match.converters[key])
+			if err != nil {
+				panic(err)
+			} else if len(res) > 0 {
+				context.Request.Params[key] = res[0]
+			}
+		}
 
-	injector := NewInjector()
-	injector.Register(request)
-	injector.Register(responseWriter)
-	injector.Register(context)
-	injector.SetParent(e.Injector())
+	}
 	_, err := injector.Apply(match.HandlerFunc())
 	if err != nil {
 		log.Println(err)
@@ -149,8 +163,10 @@ func (r *Route) HandlerFunc() interface{} {
 	return r.handlerFunc
 }
 
+type handlerFunction interface{}
+
 // SetHandlerFunc sets the route handler function
-func (r *Route) SetHandlerFunc(handlerFunc interface{}) {
+func (r *Route) SetHandlerFunc(handlerFunc handlerFunction) {
 	if r.IsFrozen() {
 		return
 	}
@@ -215,9 +231,11 @@ func (r *Route) SetMethods(methods []string) {
 	r.methods = methods
 }
 
-func (r *Route) Convert(param string, converterFunc interface{}) *Route {
-	if r.IsFrozen() == false {
-		if IsCallable(converterFunc) == false {
+type conversionFunction interface{}
+
+func (r *Route) Convert(param string, converterFunc conversionFunction) *Route {
+	if !r.IsFrozen() {
+		if !IsCallable(converterFunc) {
 			panic(fmt.Sprintf("%v is not callable", converterFunc))
 		}
 		r.converters[param] = converterFunc
@@ -295,8 +313,12 @@ type Injector struct {
 	parent   *Injector
 }
 
-func NewInjector() *Injector {
-	return &Injector{services: map[reflect.Type]interface{}{}}
+func NewInjector(service ...interface{}) *Injector {
+	injector := &Injector{services: map[reflect.Type]interface{}{}}
+	for _, service_ := range service {
+		injector.Register(service_)
+	}
+	return injector
 }
 
 // Register registers a new service to the injector
@@ -341,7 +363,6 @@ func (injector *Injector) Apply(callable interface{}) ([]interface{}, error) {
 		}
 		arguments = append(arguments, reflect.ValueOf(argument))
 	}
-	log.Println(arguments)
 	results := callableValue.Call(arguments)
 
 	out := []interface{}{}
@@ -368,3 +389,9 @@ func (injector Injector) Parent() *Injector {
 func IsCallable(value interface{}) bool {
 	return reflect.ValueOf(value).Kind() == reflect.Func
 }
+
+/**********************************/
+/*             TYPEDEFS           */
+/**********************************/
+
+type Convertible string
