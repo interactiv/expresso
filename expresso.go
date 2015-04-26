@@ -140,6 +140,9 @@ type Route struct {
 	params      []string
 	frozen      bool
 	converters  map[string]interface{}
+	assertions  map[string]string
+	// name is the route's name
+	name string
 }
 
 // NewRoute creates a new route with a path that handles all methods
@@ -148,8 +151,23 @@ func NewRoute(path string) *Route {
 		methods:    []string{"*"},
 		params:     []string{},
 		converters: map[string]interface{}{},
+		assertions: map[string]string{},
 		path:       path,
 	}
+}
+
+// SetName sets the route name
+func (r *Route) SetName(name string) *Route {
+	if r.IsFrozen() {
+		return r
+	}
+	r.name = name
+	return r
+}
+
+// Name returns the route's name
+func (r *Route) Name() string {
+	return r.name
 }
 
 // Params return route variable names.
@@ -188,9 +206,9 @@ func (r Route) MethodMatch(method string) bool {
 }
 
 // Freeze freezes a route , which will make it read only
-func (r *Route) Freeze() {
+func (r *Route) Freeze() *Route {
 	if r.IsFrozen() {
-		return
+		return r
 	}
 	// extract route variables
 	routeVarsRegexp := regexp.MustCompile(Pattern)
@@ -202,8 +220,22 @@ func (r *Route) Freeze() {
 			}
 		}
 	}
-	r.pattern = regexp.MustCompile(routeVarsRegexp.ReplaceAllString(r.path, DefaultParamPattern))
+	// replace route variables either with the default variable pattern or an assertion corresponding to the route variable
+	r.pattern = regexp.MustCompile(routeVarsRegexp.ReplaceAllStringFunc(r.path, func(match string) string {
+		// if an assertion is found, replace with the assertion
+		params := regexp.MustCompile("\\w+").FindAllString(match, -1)
+		if len(params) > 0 {
+			if r.assertions[params[0]] != "" {
+				return r.assertions[params[0]]
+			}
+		}
+		return DefaultParamPattern
+	}))
+	if r.name == "" {
+		r.name = regexp.MustCompile("\\W+").ReplaceAllString(r.path+"_"+fmt.Sprint(r.methods), "_")
+	}
 	r.frozen = true
+	return r
 }
 
 // IsFrozen return the frozen state of a route.
@@ -233,6 +265,9 @@ func (r *Route) SetMethods(methods []string) {
 
 type conversionFunction interface{}
 
+// Convert converts a string value using a converter function. Arguments of
+// the converter function will be injected according to their type. The initial value
+// is injected as a string
 func (r *Route) Convert(param string, converterFunc conversionFunction) *Route {
 	if !r.IsFrozen() {
 		if !IsCallable(converterFunc) {
@@ -240,6 +275,19 @@ func (r *Route) Convert(param string, converterFunc conversionFunction) *Route {
 		}
 		r.converters[param] = converterFunc
 	}
+	return r
+}
+
+// Assert asserts that a route variable respects a given regexp pattern.
+//
+// WILL Panic! if the pattern is not valid regexp pattern
+func (r *Route) Assert(parameterName string, pattern string) *Route {
+	if r.IsFrozen() {
+		return r
+	}
+	// if the pattern is not a valid regexp pattern string, panic
+	regexp.MustCompile("(" + pattern + ")")
+	r.assertions[parameterName] = "(" + pattern + ")"
 	return r
 }
 

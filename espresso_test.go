@@ -3,7 +3,6 @@ package expresso_test
 import (
 	"bytes"
 	"fmt"
-	"log"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -130,11 +129,9 @@ func TestConvert(t *testing.T) {
 	app := expresso.New()
 	app.Get("/person/:person", func(ctx *expresso.Context, rw http.ResponseWriter) {
 		var person *Person
-		log.Println(ctx.Request.Params)
 		person = ctx.Request.Params["person"].(*Person)
 		fmt.Fprintf(rw, "%s", person.name)
 		e.Expect(person).Not().ToBeNil()
-		t.Log(person)
 	}).Convert("person", func(person string, r *http.Request) *Person {
 		id, err := strconv.Atoi(person)
 		if err != nil {
@@ -142,7 +139,6 @@ func TestConvert(t *testing.T) {
 		}
 		return PersonRepository.Find(id)
 	})
-	t.Log(app.RouteCollection.Routes)
 	server := httptest.NewServer(app)
 	defer server.Close()
 	response, err := http.Get(server.URL + "/person/0")
@@ -151,6 +147,23 @@ func TestConvert(t *testing.T) {
 	e.Expect(response.StatusCode).ToBe(200)
 }
 
+func TestAssert(t *testing.T) {
+	app := expresso.New()
+	e := expect.New(t)
+	app.Get("/movies/:id", func(ctx *expresso.Context) {
+		e.Expect(ctx.Request.Params["id"]).ToEqual("0123")
+	}).Assert("id", "\\d+")
+	server := httptest.NewServer(app)
+	defer server.Close()
+	res, err := http.Get(server.URL + "/movies/foobar")
+	defer res.Body.Close()
+	e.Expect(err).ToBeNil()
+	e.Expect(res.StatusCode).ToEqual(404)
+	res, err = http.Get(server.URL + "/movies/0123")
+	defer res.Body.Close()
+	e.Expect(err).ToBeNil()
+	e.Expect(res.StatusCode).ToEqual(200)
+}
 func TestIsCallable(t *testing.T) {
 	var f = func() {}
 	e := expect.New(t)
@@ -166,11 +179,9 @@ func TestInjector(t *testing.T) {
 	f, err := injector.Get(reflect.TypeOf((*Foo)(nil)))
 	e.Expect(err).ToBeNil()
 	e.Expect(f).Not().ToBeNil()
-	t.Log(f, reflect.TypeOf(f))
 	f1, err := injector.Get(reflect.TypeOf((*Caller)(nil)))
 	e.Expect(err).ToBeNil()
 	e.Expect(f1).Not().ToBeNil()
-	t.Log(f1, reflect.TypeOf(f1))
 	// Test apply
 	var res []interface{}
 	res, err = injector.Apply(func(c Caller) string {
@@ -178,7 +189,18 @@ func TestInjector(t *testing.T) {
 	})
 	e.Expect(err).ToBeNil()
 	e.Expect(res[0]).ToEqual("called")
-	t.Log(res)
+
+}
+
+func TestBind(t *testing.T) {
+	r := expresso.NewRoute("/library/books")
+	r.SetMethods([]string{"GET", "POST"})
+	r.Freeze()
+	expect.Expect(r.Name(), t).ToBe("_library_books__GET_POST_")
+	r = expresso.NewRoute("/post/new")
+	r.SetName("new_post")
+	r.Freeze()
+	expect.Expect(r.Name(), t).ToBe("new_post")
 
 }
 
