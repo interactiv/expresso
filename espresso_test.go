@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"testing"
 
 	"github.com/interactiv/expect"
@@ -22,7 +23,7 @@ func TestHelloWord(t *testing.T) {
 	)
 	app := expresso.App()
 	app.Get("/hello/:name", func(ctx *expresso.Context, rw http.ResponseWriter) {
-		fmt.Fprintf(rw, "Hello %s", ctx.Params["name"])
+		fmt.Fprintf(rw, "Hello %s", ctx.Request.Params["name"])
 	})
 	w := httptest.NewRecorder()
 	if req, err = http.NewRequest("GET", "http://foobar.com/hello/foo", nil); err != nil {
@@ -64,7 +65,7 @@ func TestPut(t *testing.T) {
 	id := "10"
 	e := expect.New(t)
 	app.Put("/blog/:id", func(ctx *expresso.Context) {
-		e.Expect(ctx.Params["id"]).ToEqual(id)
+		e.Expect(ctx.Request.Params["id"]).ToEqual(id)
 	})
 	req, err := http.NewRequest("PUT", fmt.Sprintf("http://foobar.com/blog/%s", id), nil)
 	e.Expect(err).ToBeNil()
@@ -79,8 +80,8 @@ func TestDelete(t *testing.T) {
 	id := "200"
 	e := expect.New(t)
 	app.Delete("/category/:category/product/:id", func(ctx *expresso.Context) {
-		e.Expect(ctx.Params["category"]).ToEqual(category)
-		e.Expect(ctx.Params["id"]).ToEqual(id)
+		e.Expect(ctx.Request.Params["category"]).ToEqual(category)
+		e.Expect(ctx.Request.Params["id"]).ToEqual(id)
 	})
 	res := httptest.NewRecorder()
 	req, err := http.NewRequest("DELETE", fmt.Sprintf("http://example.com/category/%s/product/%s?foo=bar", category, id), nil)
@@ -88,6 +89,7 @@ func TestDelete(t *testing.T) {
 	app.ServeHTTP(res, req)
 	e.Expect(res.Code).ToEqual(200)
 }
+
 func TestMatch(t *testing.T) {
 	e := expect.New(t)
 	app := expresso.App()
@@ -128,8 +130,37 @@ func TestIsCallable(t *testing.T) {
 	e.Expect(expresso.IsCallable(foo.Call)).ToBeTrue()
 }
 
-type Foo struct{}
+func TestInjector(t *testing.T) {
+	e := expect.New(t)
+	injector := expresso.NewInjector()
+	injector.Register(&Foo{Bar: "bar"})
+	f, err := injector.Get(reflect.TypeOf((*Foo)(nil)))
+	e.Expect(err).ToBeNil()
+	e.Expect(f).Not().ToBeNil()
+	t.Log(f, reflect.TypeOf(f))
+	f1, err := injector.Get(reflect.TypeOf((*Caller)(nil)))
+	e.Expect(err).ToBeNil()
+	e.Expect(f1).Not().ToBeNil()
+	t.Log(f1, reflect.TypeOf(f1))
+	// Test apply
+	var res []interface{}
+	res, err = injector.Apply(func(c Caller) string {
+		return c.Call()
+	})
+	e.Expect(err).ToBeNil()
+	e.Expect(res[0]).ToEqual("called")
+	t.Log(res)
 
-func (f Foo) Call() {
+}
 
+type Foo struct {
+	Bar string
+}
+
+func (f Foo) Call() string {
+	return "called"
+}
+
+type Caller interface {
+	Call() string
 }
