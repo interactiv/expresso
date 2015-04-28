@@ -449,7 +449,7 @@ func (rm *RequestMatcher) Match(request *http.Request) *Route {
 	return nil
 }
 
-func (rm *RequestMatcher) MatchAll(RequestMatcher *http.Request) (matches []*Route) {
+func (rm *RequestMatcher) MatchAll(request *http.Request) (matches []*Route) {
 	if len(rm.routeCollection.Routes) > 0 {
 		for _, route := range rm.routeCollection.Routes {
 			if route.pattern.MatchString(request.URL.Path) && route.MethodMatch(request.Method) {
