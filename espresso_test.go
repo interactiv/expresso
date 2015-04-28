@@ -28,6 +28,9 @@ func TestHelloWord(t *testing.T) {
 		err error
 	)
 	app := expresso.New()
+	app.Get("/",func(rw http.ResponseWriter){
+		rw.Write([]byte("Hello"))
+	})
 	app.Get("/hello/:name", func(ctx *expresso.Context, rw http.ResponseWriter) {
 		fmt.Fprintf(rw, "Hello %s", ctx.RequestVars["name"])
 	})
