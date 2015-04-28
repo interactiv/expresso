@@ -5,10 +5,11 @@ package expresso
 
 import (
 	"fmt"
-	"log"
 	"net/http"
+	"os"
 	"reflect"
 	"regexp"
+	"runtime/debug"
 	"strings"
 )
 
@@ -27,9 +28,10 @@ var (
 type Expresso struct {
 	debug bool
 	*RouteCollection
-	booted        bool
-	injector      *Injector
-	errorHandlers map[int]HandlerFunction
+	RequestMatcher *RequestMatcher
+	booted         bool
+	injector       *Injector
+	errorHandlers  map[int]HandlerFunction
 }
 
 // New creates an expresso application
@@ -64,19 +66,15 @@ func (e *Expresso) ServeHTTP(responseWriter http.ResponseWriter, request *http.R
 		match                  *Route
 		context                *Context
 		injector               *Injector
-		err                    error
 		responseWriterWithCode *ResponseWriterWithCode
 		stack                  *StackWithInjector
 	)
 	defer func() {
 		if err := recover(); err != nil {
-			log.Println(err)
-			if e.errorHandlers[500] != nil {
-				injector.Register(err)
-				injector.Apply(e.errorHandlers[500])
-			} else {
-				panic(err)
-			}
+			//log.Println(err)
+			os.Stderr.WriteString(fmt.Sprint(err))
+			injector.Register(err)
+			injector.MustApply(e.errorHandlers[500])
 		}
 	}()
 	// create context and injector for context
@@ -88,32 +86,23 @@ func (e *Expresso) ServeHTTP(responseWriter http.ResponseWriter, request *http.R
 	injector = NewInjector(request, responseWriterWithCode, context)
 	injector.Register(injector)
 	injector.SetParent(e.Injector())
-
+	if e.errorHandlers[500] == nil {
+		e.Error(500, InternalServerErrorHandler)
+	}
+	if e.errorHandlers[404] == nil {
+		e.Error(404, NotFoundErrorHandler)
+	}
+	if e.RequestMatcher == nil {
+		e.RequestMatcher = NewRequestMatcher(e.RouteCollection)
+	}
 	if !e.Booted() {
 		e.Boot()
 	}
 	// try to match current request url with a route
-	if len(e.RouteCollection.Routes) > 0 {
-		for _, route := range e.RouteCollection.Routes {
-			if route.pattern.MatchString(request.URL.Path) && route.MethodMatch(request.Method) {
-				match = route
-				break
-			}
-		}
-	}
-
+	match = e.RequestMatcher.Match(request)
 	// route not found
-	if len(e.RouteCollection.Routes) <= 0 || match == nil {
-		// if not error handler defined for code 404 use status not found
-		if e.errorHandlers[404] == nil {
-			responseWriter.WriteHeader(http.StatusNotFound)
-		} else {
-			injector.Register(fmt.Errorf("Route %s not found.", request.URL.Path))
-			_, err := injector.Apply(e.errorHandlers[404])
-			if err != nil {
-				panic(err)
-			}
-		}
+	if match == nil {
+		injector.MustApply(e.errorHandlers[404])
 		return
 	}
 	// If there are some request variables, populate the context with them
@@ -125,10 +114,8 @@ func (e *Expresso) ServeHTTP(responseWriter http.ResponseWriter, request *http.R
 		if match.converters[key] != nil {
 			converterInjector := NewInjector(value)
 			converterInjector.SetParent(injector)
-			res, err := converterInjector.Apply(match.converters[key])
-			if err != nil {
-				panic(err)
-			} else if len(res) > 0 {
+			res := converterInjector.MustApply(match.converters[key])
+			if len(res) > 0 {
 				context.RequestVars[key] = res[0]
 			}
 		}
@@ -139,11 +126,8 @@ func (e *Expresso) ServeHTTP(responseWriter http.ResponseWriter, request *http.R
 	//try to get status code from response,if error, try to execute
 	// error handler
 	code := responseWriterWithCode.Code
-	if err == nil && code > 399 && e.errorHandlers[code] != nil {
-		_, err = injector.Apply(e.errorHandlers[code])
-		if err != nil {
-			panic(err)
-		}
+	if code > 399 && e.errorHandlers[code] != nil {
+		injector.MustApply(e.errorHandlers[code])
 	}
 }
 
@@ -164,6 +148,20 @@ func (e *Expresso) Error(errorCode int, handlerFunc HandlerFunction) {
 // Injector return the injector
 func (e *Expresso) Injector() *Injector {
 	return e.injector
+}
+
+/**********************************/
+/*     DEFAULT ERROR HANDLERS     */
+/**********************************/
+
+// InternalServerErrorHandler executes the default 500 handler
+func InternalServerErrorHandler(err error, rw http.ResponseWriter) {
+	http.Error(rw, fmt.Sprintf("%v\r\n%v", err, debug.Stack()), http.StatusInternalServerError)
+}
+
+// NotFoundErrorHandler executes the default 404 handler
+func NotFoundErrorHandler(rw http.ResponseWriter, r *http.Request) {
+	http.NotFound(rw, r)
 }
 
 /**********************************/
@@ -429,6 +427,40 @@ func (rc *RouteCollection) Match(path string, handlerFunc ...HandlerFunction) *R
 }
 
 /**********************************/
+/*         REQUEST MATCHER        */
+/**********************************/
+type RequestMatcher struct {
+	routeCollection *RouteCollection
+}
+
+func NewRequestMatcher(routeCollection *RouteCollection) *RequestMatcher {
+	return &RequestMatcher{routeCollection}
+}
+func (rm *RequestMatcher) Match(request *http.Request) *Route {
+	// try to match current request url with a route
+	if len(rm.routeCollection.Routes) > 0 {
+		for _, route := range rm.routeCollection.Routes {
+			if route.pattern.MatchString(request.URL.Path) && route.MethodMatch(request.Method) {
+				return route
+				break
+			}
+		}
+	}
+	return nil
+}
+
+func (rm *RequestMatcher) MatchAll(RequestMatcher *http.Request) (matches []*Route) {
+	if len(rm.routeCollection.Routes) > 0 {
+		for _, route := range rm.routeCollection.Routes {
+			if route.pattern.MatchString(request.URL.Path) && route.MethodMatch(request.Method) {
+				matches = append(matches, route)
+			}
+		}
+	}
+	return
+}
+
+/**********************************/
 /*            INJECTOR            */
 /**********************************/
 
@@ -489,7 +521,7 @@ func (i *Injector) Resolve(someType reflect.Type) (interface{}, error) {
 func (i *Injector) Apply(function interface{}) ([]interface{}, error) {
 	var err error
 	if !IsCallable(function) {
-		return nil, fmt.Errorf("%v is not a function or a method", function)
+		return nil, fmt.Errorf("%v is not a function or a method\r\n%s", function, debug.Stack())
 	}
 	arguments := []reflect.Value{}
 	callableValue := reflect.ValueOf(function)
@@ -507,6 +539,15 @@ func (i *Injector) Apply(function interface{}) ([]interface{}, error) {
 		out = append(out, result.Interface())
 	}
 	return out, err
+}
+
+// MustApply is the "can panic" version of MustApply
+func (i *Injector) MustApply(function interface{}) (results []interface{}) {
+	results, err := i.Apply(function)
+	if err != nil {
+		panic(err)
+	}
+	return
 }
 
 // SetParent sets the injector's parent
@@ -624,10 +665,7 @@ func (s *StackWithInjector) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		handler := handlers[0]
 		handlers = handlers[1:]
 		MustBeCallable(handler)
-		_, err := s.injector.Apply(handler)
-		if err != nil {
-			panic(err)
-		}
+		s.injector.MustApply(handler)
 	}
 	s.injector.Register(next)
 	next()
