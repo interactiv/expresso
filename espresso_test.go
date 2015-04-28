@@ -169,6 +169,7 @@ func TestAssert(t *testing.T) {
 	e.Expect(err).ToBeNil()
 	e.Expect(res.StatusCode).ToEqual(200)
 }
+
 func TestIsCallable(t *testing.T) {
 	var f = func() {}
 	e := expect.New(t)
@@ -269,6 +270,28 @@ func TestExpressoError401(t *testing.T) {
 	body, err := ioutil.ReadAll(res.Body)
 	e.Expect(err).ToBe(nil)
 	e.Expect(string(body)).ToEqual(notAuthorizedMessage)
+}
+
+func TestStack(t *testing.T) {
+	const message = "Bienvenue"
+	e := expect.New(t)
+	app := expresso.New()
+	app.Match("/", func(next expresso.Next) {
+		next()
+	}, func(rw http.ResponseWriter) {
+		rw.Write([]byte(message))
+	}, func(rw http.ResponseWriter) {
+		rw.Write([]byte("foo"))
+	})
+	server := httptest.NewServer(app)
+	defer server.Close()
+	res, err := http.Get(server.URL + "/")
+	defer res.Body.Close()
+	e.Expect(err).ToBeNil()
+	e.Expect(res.StatusCode).ToBe(200)
+	body, err := ioutil.ReadAll(res.Body)
+	e.Expect(err).ToBeNil()
+	e.Expect(string(body)).ToEqual(message)
 }
 
 /********************************/

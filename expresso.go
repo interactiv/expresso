@@ -176,12 +176,14 @@ type Context struct {
 		*http.Request
 	}
 	RequestVars map[string]interface{}
+	Vars        map[string]interface{}
 }
 
 // NewContext returns a new Context
 func NewContext(request *http.Request) *Context {
 	ctx := &Context{
 		RequestVars: map[string]interface{}{},
+		Vars:        map[string]interface{}{},
 	}
 	ctx.Request.Request = request
 	return ctx
@@ -624,6 +626,6 @@ func (s *StackWithInjector) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 			panic(err)
 		}
 	}
-	s.injector.RegisterWithType(&next, (*Next)(nil))
+	s.injector.Register(next)
 	next()
 }
