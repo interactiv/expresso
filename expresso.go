@@ -134,7 +134,7 @@ func (e *Expresso) ServeHTTP(responseWriter http.ResponseWriter, request *http.R
 		}
 
 	}
-	stack = NewStackWithInjector(injector, match.HandlerFunc()...)
+	stack = NewStackWithInjector(injector, match.Handlers()...)
 	stack.ServeHTTP(responseWriterWithCode, request)
 	//try to get status code from response,if error, try to execute
 	// error handler
@@ -243,7 +243,7 @@ func (r *Route) Name() string {
 func (r *Route) Params() []string { return r.params }
 
 // HandlerFunc returns the current route handler function
-func (r *Route) HandlerFunc() []HandlerFunction {
+func (r *Route) Handlers() []HandlerFunction {
 	return r.handlerFunc
 }
 
@@ -253,7 +253,7 @@ type HandlerFunction interface{}
 // SetHandlerFunc sets the route handler function.
 //
 // Can Panic!
-func (r *Route) SetHandlerFunc(handlerFunc ...HandlerFunction) {
+func (r *Route) SetHandlers(handlerFunc ...HandlerFunction) {
 	if r.IsFrozen() {
 		return
 	}
@@ -291,7 +291,7 @@ func (r *Route) Freeze() *Route {
 		}
 	}
 	// replace route variables either with the default variable pattern or an assertion corresponding to the route variable
-	r.pattern = regexp.MustCompile(routeVarsRegexp.ReplaceAllStringFunc(r.path, func(match string) string {
+	stringPattern := routeVarsRegexp.ReplaceAllStringFunc(r.path, func(match string) string {
 		// if an assertion is found, replace with the assertion
 		params := regexp.MustCompile("\\w+").FindAllString(match, -1)
 		if len(params) > 0 {
@@ -300,7 +300,10 @@ func (r *Route) Freeze() *Route {
 			}
 		}
 		return DefaultParamPattern
-	}))
+	})
+	// add ^ and $ and optional /? to string pattern
+	stringPattern = "^" + stringPattern + "/?$"
+	r.pattern = regexp.MustCompile(stringPattern)
 	if r.name == "" {
 		r.name = regexp.MustCompile("\\W+").ReplaceAllString(r.path+"_"+fmt.Sprint(r.methods), "_")
 	}
@@ -420,7 +423,7 @@ func (rc *RouteCollection) Match(path string, handlerFunc ...HandlerFunction) *R
 		panic(fmt.Sprintf("RouteCollection %v is frozen, no route can be added.", rc))
 	}
 	route := NewRoute(path)
-	route.SetHandlerFunc(handlerFunc...)
+	route.SetHandlers(handlerFunc...)
 	rc.Routes = append(rc.Routes, route)
 	return route
 }
