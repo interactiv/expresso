@@ -4,7 +4,6 @@
 package expresso
 
 import (
-	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -28,15 +27,17 @@ var (
 type Expresso struct {
 	debug bool
 	*RouteCollection
-	booted   bool
-	injector *Injector
+	booted        bool
+	injector      *Injector
+	errorHandlers map[int]HandlerFunction
 }
 
-// App creates an expresso application
+// New creates an expresso application
 func New() *Expresso {
 	expresso := &Expresso{
 		RouteCollection: &RouteCollection{Routes: []*Route{}},
 		injector:        NewInjector(),
+		errorHandlers:   map[int]HandlerFunction{},
 	}
 	expresso.injector.Register(expresso)
 	return expresso
@@ -55,33 +56,72 @@ func (e Expresso) Booted() bool {
 	return e.booted
 }
 
-// ServeHTTP boots expresso server and handles http requests
+// ServeHTTP boots expresso server and handles http requests.
+//
+// Can Panic!
 func (e *Expresso) ServeHTTP(responseWriter http.ResponseWriter, request *http.Request) {
-	var match *Route
+	var (
+		match                  *Route
+		context                *Context
+		injector               *Injector
+		err                    error
+		responseWriterWithCode *ResponseWriterWithCode
+		stack                  *StackWithInjector
+	)
+	defer func() {
+		if err := recover(); err != nil {
+			log.Println(err)
+			if e.errorHandlers[500] != nil {
+				injector.Register(err)
+				injector.Apply(e.errorHandlers[500])
+			} else {
+				panic(err)
+			}
+		}
+	}()
+	// create context and injector for context
+	responseWriterWithCode = &ResponseWriterWithCode{
+		ResponseWriter: responseWriter,
+	}
+	// sets context and injector
+	context = NewContext(request)
+	injector = NewInjector(request, responseWriterWithCode, context)
+	injector.Register(injector)
+	injector.SetParent(e.Injector())
+
 	if !e.Booted() {
 		e.Boot()
 	}
-	for _, route := range e.RouteCollection.Routes {
-		if route.pattern.MatchString(request.URL.Path) && route.MethodMatch(request.Method) {
-			match = route
-			break
+	// try to match current request url with a route
+	if len(e.RouteCollection.Routes) > 0 {
+		for _, route := range e.RouteCollection.Routes {
+			if route.pattern.MatchString(request.URL.Path) && route.MethodMatch(request.Method) {
+				match = route
+				break
+			}
 		}
 	}
-	if match == nil {
-		responseWriter.WriteHeader(http.StatusNotFound)
+
+	// route not found
+	if len(e.RouteCollection.Routes) <= 0 || match == nil {
+		// if not error handler defined for code 404 use status not found
+		if e.errorHandlers[404] == nil {
+			responseWriter.WriteHeader(http.StatusNotFound)
+		} else {
+			injector.Register(fmt.Errorf("Route %s not found.", request.URL.Path))
+			_, err := injector.Apply(e.errorHandlers[404])
+			if err != nil {
+				panic(err)
+			}
+		}
 		return
 	}
-
-	context := NewContext(request)
-	injector := NewInjector(request, responseWriter, context)
-	injector.SetParent(e.Injector())
-	defer func() { context = nil; injector = nil }()
-
+	// If there are some request variables, populate the context with them
 	for i, matchedParam := range match.pattern.FindStringSubmatch(request.URL.Path)[1:] {
-		context.Request.Params[match.params[i]] = matchedParam
+		context.RequestVars[match.params[i]] = matchedParam
 	}
 	// Apply request parameter converters
-	for key, value := range context.Request.Params {
+	for key, value := range context.RequestVars {
 		if match.converters[key] != nil {
 			converterInjector := NewInjector(value)
 			converterInjector.SetParent(injector)
@@ -89,18 +129,39 @@ func (e *Expresso) ServeHTTP(responseWriter http.ResponseWriter, request *http.R
 			if err != nil {
 				panic(err)
 			} else if len(res) > 0 {
-				context.Request.Params[key] = res[0]
+				context.RequestVars[key] = res[0]
 			}
 		}
 
 	}
-	_, err := injector.Apply(match.HandlerFunc())
-	if err != nil {
-		log.Println(err)
-		responseWriter.WriteHeader(http.StatusInternalServerError)
+	stack = NewStackWithInjector(injector, match.HandlerFunc()...)
+	stack.ServeHTTP(responseWriterWithCode, request)
+	//try to get status code from response,if error, try to execute
+	// error handler
+	code := responseWriterWithCode.Code
+	if err == nil && code > 399 && e.errorHandlers[code] != nil {
+		_, err = injector.Apply(e.errorHandlers[code])
+		if err != nil {
+			panic(err)
+		}
 	}
 }
 
+// Error sets an error handler given an error code.
+// Arguments of that handler function are resolved by expresso's injector.
+//
+// Can Panic! if the error code is lower than 400.
+func (e *Expresso) Error(errorCode int, handlerFunc HandlerFunction) {
+	if e.Booted() {
+		return
+	}
+	if errorCode < 400 {
+		panic(fmt.Sprintf("errorCode should be greater or equal to 400, got %d", errorCode))
+	}
+	e.errorHandlers[errorCode] = handlerFunc
+}
+
+// Injector return the injector
 func (e *Expresso) Injector() *Injector {
 	return e.injector
 }
@@ -113,14 +174,16 @@ func (e *Expresso) Injector() *Injector {
 type Context struct {
 	Request struct {
 		*http.Request
-		Params map[string]interface{}
 	}
+	RequestVars map[string]interface{}
 }
 
+// NewContext returns a new Context
 func NewContext(request *http.Request) *Context {
-	ctx := &Context{}
+	ctx := &Context{
+		RequestVars: map[string]interface{}{},
+	}
 	ctx.Request.Request = request
-	ctx.Request.Params = map[string]interface{}{}
 	return ctx
 }
 
@@ -136,7 +199,7 @@ type Route struct {
 	pattern *regexp.Regexp
 	// path is the path as string
 	path        string
-	handlerFunc interface{}
+	handlerFunc []HandlerFunction
 	params      []string
 	frozen      bool
 	converters  map[string]interface{}
@@ -148,11 +211,12 @@ type Route struct {
 // NewRoute creates a new route with a path that handles all methods
 func NewRoute(path string) *Route {
 	return &Route{
-		methods:    []string{"*"},
-		params:     []string{},
-		converters: map[string]interface{}{},
-		assertions: map[string]string{},
-		path:       path,
+		methods:     []string{"*"},
+		params:      []string{},
+		converters:  map[string]interface{}{},
+		assertions:  map[string]string{},
+		path:        path,
+		handlerFunc: []HandlerFunction{},
 	}
 }
 
@@ -177,23 +241,27 @@ func (r *Route) Name() string {
 func (r *Route) Params() []string { return r.params }
 
 // HandlerFunc returns the current route handler function
-func (r *Route) HandlerFunc() interface{} {
+func (r *Route) HandlerFunc() []HandlerFunction {
 	return r.handlerFunc
 }
 
-type handlerFunction interface{}
+// HandlerFunction represent a route handler
+type HandlerFunction interface{}
 
-// SetHandlerFunc sets the route handler function
-func (r *Route) SetHandlerFunc(handlerFunc handlerFunction) {
+// SetHandlerFunc sets the route handler function.
+//
+// Can Panic!
+func (r *Route) SetHandlerFunc(handlerFunc ...HandlerFunction) {
 	if r.IsFrozen() {
 		return
 	}
-	if !IsCallable(handlerFunc) {
-		panic(fmt.Sprintf("%v must be callable", handlerFunc))
-		return
+	for _, function := range handlerFunc {
+		MustBeCallable(function)
 	}
 	r.handlerFunc = handlerFunc
 }
+
+// MethodMatch returns true if that method is handled by the route
 func (r Route) MethodMatch(method string) bool {
 	match := false
 	for _, m := range r.Methods() {
@@ -267,12 +335,12 @@ type conversionFunction interface{}
 
 // Convert converts a string value using a converter function. Arguments of
 // the converter function will be injected according to their type. The initial value
-// is injected as a string
+// is injected as a string.
+//
+// Can Panic!
 func (r *Route) Convert(param string, converterFunc conversionFunction) *Route {
 	if !r.IsFrozen() {
-		if !IsCallable(converterFunc) {
-			panic(fmt.Sprintf("%v is not callable", converterFunc))
-		}
+		MustBeCallable(converterFunc)
 		r.converters[param] = converterFunc
 	}
 	return r
@@ -317,37 +385,40 @@ func (rc RouteCollection) IsFrozen() bool {
 }
 
 // Get creates a GET route
-func (rc *RouteCollection) Get(path string, handlerFunc interface{}) *Route {
-	route := rc.Match(path, handlerFunc)
+func (rc *RouteCollection) Get(path string, handlerFunc ...HandlerFunction) *Route {
+	route := rc.Match(path, handlerFunc...)
 	route.SetMethods([]string{"GET", "HEAD"})
 	return route
 }
 
 // Post creates a POST route
-func (rc *RouteCollection) Post(path string, handlerFunc interface{}) *Route {
-	route := rc.Match(path, handlerFunc)
+func (rc *RouteCollection) Post(path string, handlerFunc ...HandlerFunction) *Route {
+	route := rc.Match(path, handlerFunc...)
 	route.SetMethods([]string{"POST"})
 	return route
 }
 
 // Put creates a PUT route
-func (rc *RouteCollection) Put(path string, handlerFunc interface{}) *Route {
-	route := rc.Match(path, handlerFunc)
+func (rc *RouteCollection) Put(path string, handlerFunc ...HandlerFunction) *Route {
+	route := rc.Match(path, handlerFunc...)
 	route.SetMethods([]string{"PUT"})
 	return route
 }
 
 // Delete creates a DELETE route
-func (rc *RouteCollection) Delete(path string, handlerFunc interface{}) *Route {
-	route := rc.Match(path, handlerFunc)
+func (rc *RouteCollection) Delete(path string, handlerFunc ...HandlerFunction) *Route {
+	route := rc.Match(path, handlerFunc...)
 	route.SetMethods([]string{"DELETE"})
 	return route
 }
 
 // Match creates a route that matches all methods
-func (rc *RouteCollection) Match(path string, handlerFunc interface{}) *Route {
+func (rc *RouteCollection) Match(path string, handlerFunc ...HandlerFunction) *Route {
+	if rc.IsFrozen() {
+		panic(fmt.Sprintf("RouteCollection %v is frozen, no route can be added.", rc))
+	}
 	route := NewRoute(path)
-	route.SetHandlerFunc(handlerFunc)
+	route.SetHandlerFunc(handlerFunc...)
 	rc.Routes = append(rc.Routes, route)
 	return route
 }
@@ -356,15 +427,18 @@ func (rc *RouteCollection) Match(path string, handlerFunc interface{}) *Route {
 /*            INJECTOR            */
 /**********************************/
 
+// Injector is a dependency injection container
+// Based on types.
 type Injector struct {
 	services map[reflect.Type]interface{}
 	parent   *Injector
 }
 
-func NewInjector(service ...interface{}) *Injector {
+// NewInjector returns an new Injector
+func NewInjector(services ...interface{}) *Injector {
 	injector := &Injector{services: map[reflect.Type]interface{}{}}
-	for _, service_ := range service {
-		injector.Register(service_)
+	for _, service := range services {
+		injector.Register(service)
 	}
 	return injector
 }
@@ -374,38 +448,48 @@ func (i *Injector) Register(service interface{}) {
 	i.services[reflect.ValueOf(service).Type()] = service
 }
 
-func (i *Injector) Get(type_ reflect.Type) (interface{}, error) {
+// RegisterWithType registers a new service to the injector with a given type
+func (i *Injector) RegisterWithType(service interface{}, Type interface{}) {
+	if !reflect.TypeOf(service).ConvertibleTo(reflect.TypeOf(Type)) {
+		panic(fmt.Sprint(service, " is not convertible to ", Type))
+	}
+	i.services[reflect.TypeOf(Type)] = service
+}
+
+// Resolve fetch the value according to a registered type
+func (i *Injector) Resolve(someType reflect.Type) (interface{}, error) {
 	var (
 		err     error
 		service interface{}
 	)
 	for typeService, service := range i.services {
-		if typeService == type_ {
+		if typeService == someType {
 			return service, nil
-		} else if type_.Kind() == reflect.Interface && typeService.Implements(type_) {
+		} else if someType.Kind() == reflect.Interface && typeService.Implements(someType) {
 			return service, nil
-		} else if type_.Kind() == reflect.Ptr && type_.Elem().Kind() == reflect.Interface && typeService.Implements(type_.Elem()) {
+		} else if someType.Kind() == reflect.Ptr && someType.Elem().Kind() == reflect.Interface && typeService.Implements(someType.Elem()) {
 			return service, nil
 		}
 	}
 	if service == nil && i.parent != nil && i.parent != i {
-		service, err = i.parent.Get(type_)
+		service, err = i.parent.Resolve(someType)
 	}
 	if service == nil {
-		err = errors.New(fmt.Sprintf("service with type %v cannot be injected : not found", type_))
+		err = fmt.Errorf("service with type %v cannot be injected : not found", someType)
 	}
 	return service, err
 }
 
-func (injector *Injector) Apply(callable interface{}) ([]interface{}, error) {
+// Apply applies resolved values to the given function
+func (i *Injector) Apply(function interface{}) ([]interface{}, error) {
 	var err error
-	if !IsCallable(callable) {
-		return nil, errors.New(fmt.Sprintf("%v is not a function or a method", callable))
+	if !IsCallable(function) {
+		return nil, fmt.Errorf("%v is not a function or a method", function)
 	}
 	arguments := []reflect.Value{}
-	callableValue := reflect.ValueOf(callable)
-	for i := 0; i < callableValue.Type().NumIn(); i++ {
-		argument, err := injector.Get(callableValue.Type().In(i))
+	callableValue := reflect.ValueOf(function)
+	for j := 0; j < callableValue.Type().NumIn(); j++ {
+		argument, err := i.Resolve(callableValue.Type().In(j))
 		if err != nil {
 			return nil, err
 		}
@@ -420,12 +504,14 @@ func (injector *Injector) Apply(callable interface{}) ([]interface{}, error) {
 	return out, err
 }
 
-func (injector *Injector) SetParent(parent *Injector) {
-	injector.parent = parent
+// SetParent sets the injector's parent
+func (i *Injector) SetParent(parent *Injector) {
+	i.parent = parent
 }
 
-func (injector Injector) Parent() *Injector {
-	return injector.parent
+// Parent gets the injector's parent
+func (i Injector) Parent() *Injector {
+	return i.parent
 }
 
 /**********************************/
@@ -433,13 +519,111 @@ func (injector Injector) Parent() *Injector {
 /**********************************/
 
 // IsCallable returns true if the value can
-// be called like a function or a method
+// be called like a function or a method.
 func IsCallable(value interface{}) bool {
+	if reflect.ValueOf(value).Kind() == reflect.Ptr {
+		return reflect.ValueOf(value).Elem().Kind() == reflect.Func
+	}
 	return reflect.ValueOf(value).Kind() == reflect.Func
+}
+
+// MustBeCallable is the "panicable" version of IsCallable
+//
+// Can Panic!
+func MustBeCallable(potentialFunction interface{}) {
+	if !IsCallable(potentialFunction) {
+		panic(fmt.Sprintf("%+v must be callable", potentialFunction))
+	}
 }
 
 /**********************************/
 /*             TYPEDEFS           */
 /**********************************/
 
-type Convertible string
+// ResponseWriterWithCode exposes the status of a response.
+type ResponseWriterWithCode struct {
+	http.ResponseWriter
+	Code int
+}
+
+// WriteHeader sends an HTTP response header with status code.
+func (r *ResponseWriterWithCode) WriteHeader(code int) {
+	r.Code = code
+	r.ResponseWriter.WriteHeader(code)
+}
+
+// Next represents a function
+type Next func()
+
+/**********************************/
+/*        MIDDLEWARE STACK        */
+/**********************************/
+
+type HandlerFuncWithNext func(http.ResponseWriter, *http.Request, http.HandlerFunc)
+
+// Stack is a middleware stack
+type Stack struct {
+	handlers []HandlerFuncWithNext
+}
+
+// NewStack returns a new Stack
+func NewStack(handlers ...HandlerFuncWithNext) *Stack {
+	return &Stack{handlers}
+}
+
+// NewStackFunc returns a HandlerFunc ready to be used with http;HandleFunc
+func NewStackFunc(handlers ...HandlerFuncWithNext) http.HandlerFunc {
+	return NewStack(handlers...).ServeHTTP
+}
+
+// ServeHTTP serves http requests
+func (s *Stack) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
+	var handlers = s.handlers
+	var next http.HandlerFunc
+	next = func(rw http.ResponseWriter, r *http.Request) {
+		if len(handlers) <= 0 {
+			return
+		}
+		handler := handlers[0]
+		handlers = handlers[1:]
+		handler(rw, r, next)
+	}
+	next(rw, r)
+}
+
+// StackWithInjector is a middleware stack with a dependency injection container
+type StackWithInjector struct {
+	handlers []HandlerFunction
+	injector *Injector
+}
+
+// NewStackWithInjector returns a new StackWithInjector
+func NewStackWithInjector(injector *Injector, handlers ...HandlerFunction) *StackWithInjector {
+	stack := &StackWithInjector{}
+	stack.handlers = handlers
+	stack.injector = NewInjector()
+	stack.injector.SetParent(injector)
+	return stack
+}
+
+// ServeHTTP serves http request
+func (s *StackWithInjector) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
+	var handlers = s.handlers
+	var next Next
+	s.injector.Register(rw)
+	s.injector.Register(r)
+	next = func() {
+		if len(handlers) <= 0 {
+			return
+		}
+		handler := handlers[0]
+		handlers = handlers[1:]
+		MustBeCallable(handler)
+		_, err := s.injector.Apply(handler)
+		if err != nil {
+			panic(err)
+		}
+	}
+	s.injector.RegisterWithType(&next, (*Next)(nil))
+	next()
+}

@@ -3,6 +3,7 @@ package expresso_test
 import (
 	"bytes"
 	"fmt"
+	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -14,6 +15,10 @@ import (
 	"github.com/interactiv/expresso"
 )
 
+/********************************/
+/*             TESTS            */
+/********************************/
+
 const formContentType = "application/x-www-form-urlencoded"
 
 func TestHelloWord(t *testing.T) {
@@ -24,7 +29,7 @@ func TestHelloWord(t *testing.T) {
 	)
 	app := expresso.New()
 	app.Get("/hello/:name", func(ctx *expresso.Context, rw http.ResponseWriter) {
-		fmt.Fprintf(rw, "Hello %s", ctx.Request.Params["name"])
+		fmt.Fprintf(rw, "Hello %s", ctx.RequestVars["name"])
 	})
 	w := httptest.NewRecorder()
 	if req, err = http.NewRequest("GET", "http://foobar.com/hello/foo", nil); err != nil {
@@ -66,7 +71,7 @@ func TestPut(t *testing.T) {
 	id := "10"
 	e := expect.New(t)
 	app.Put("/blog/:id", func(ctx *expresso.Context) {
-		e.Expect(ctx.Request.Params["id"]).ToEqual(id)
+		e.Expect(ctx.RequestVars["id"]).ToEqual(id)
 	})
 	req, err := http.NewRequest("PUT", fmt.Sprintf("http://foobar.com/blog/%s", id), nil)
 	e.Expect(err).ToBeNil()
@@ -81,8 +86,8 @@ func TestDelete(t *testing.T) {
 	id := "200"
 	e := expect.New(t)
 	app.Delete("/category/:category/product/:id", func(ctx *expresso.Context) {
-		e.Expect(ctx.Request.Params["category"]).ToEqual(category)
-		e.Expect(ctx.Request.Params["id"]).ToEqual(id)
+		e.Expect(ctx.RequestVars["category"]).ToEqual(category)
+		e.Expect(ctx.RequestVars["id"]).ToEqual(id)
 	})
 	res := httptest.NewRecorder()
 	req, err := http.NewRequest("DELETE", fmt.Sprintf("http://example.com/category/%s/product/%s?foo=bar", category, id), nil)
@@ -129,7 +134,7 @@ func TestConvert(t *testing.T) {
 	app := expresso.New()
 	app.Get("/person/:person", func(ctx *expresso.Context, rw http.ResponseWriter) {
 		var person *Person
-		person = ctx.Request.Params["person"].(*Person)
+		person = ctx.RequestVars["person"].(*Person)
 		fmt.Fprintf(rw, "%s", person.name)
 		e.Expect(person).Not().ToBeNil()
 	}).Convert("person", func(person string, r *http.Request) *Person {
@@ -151,7 +156,7 @@ func TestAssert(t *testing.T) {
 	app := expresso.New()
 	e := expect.New(t)
 	app.Get("/movies/:id", func(ctx *expresso.Context) {
-		e.Expect(ctx.Request.Params["id"]).ToEqual("0123")
+		e.Expect(ctx.RequestVars["id"]).ToEqual("0123")
 	}).Assert("id", "\\d+")
 	server := httptest.NewServer(app)
 	defer server.Close()
@@ -176,10 +181,10 @@ func TestInjector(t *testing.T) {
 	e := expect.New(t)
 	injector := expresso.NewInjector()
 	injector.Register(&Foo{Bar: "bar"})
-	f, err := injector.Get(reflect.TypeOf((*Foo)(nil)))
+	f, err := injector.Resolve(reflect.TypeOf((*Foo)(nil)))
 	e.Expect(err).ToBeNil()
 	e.Expect(f).Not().ToBeNil()
-	f1, err := injector.Get(reflect.TypeOf((*Caller)(nil)))
+	f1, err := injector.Resolve(reflect.TypeOf((*Caller)(nil)))
 	e.Expect(err).ToBeNil()
 	e.Expect(f1).Not().ToBeNil()
 	// Test apply
@@ -203,6 +208,72 @@ func TestBind(t *testing.T) {
 	expect.Expect(r.Name(), t).ToBe("new_post")
 
 }
+
+func TestExpressoError404(t *testing.T) {
+	const errorMessage = "Route %v Not Found"
+	const testRoute = "/foo/bar"
+	app := expresso.New()
+	e := expect.New(t)
+	app.Error(404, func(rw http.ResponseWriter, r *http.Request) {
+		rw.WriteHeader(http.StatusNotFound)
+		fmt.Fprintf(rw, errorMessage, r.URL.Path)
+	})
+	server := httptest.NewServer(app)
+	defer server.Close()
+	res, err := http.Get(server.URL + testRoute)
+	defer res.Body.Close()
+	e.Expect(err).ToBeNil()
+	e.Expect(res.StatusCode).ToBe(404)
+	body, err := ioutil.ReadAll(res.Body)
+	e.Expect(err).ToBeNil()
+	e.Expect(string(body)).ToBe(fmt.Sprintf(errorMessage, testRoute))
+
+}
+
+func TestExpressoError500(t *testing.T) {
+	e := expect.New(t)
+	app := expresso.New()
+	app.Get("/", func(foo *Foo) {})
+	app.Error(500, func(rw http.ResponseWriter) {
+		http.Error(rw, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+	})
+	server := httptest.NewServer(app)
+	defer server.Close()
+	res, err := http.Get(server.URL)
+	defer res.Body.Close()
+	e.Expect(err).ToBeNil()
+	e.Expect(res.StatusCode).ToEqual(500)
+}
+
+func TestExpressoError401(t *testing.T) {
+	const (
+		notAuthorizedMessage = "Not Authorized"
+		notAuthorizedRoute   = "/notauthorized"
+	)
+	e := expect.New(t)
+	app := expresso.New()
+	app.Get(notAuthorizedRoute, func(rw http.ResponseWriter) {
+		rw.WriteHeader(http.StatusUnauthorized)
+		//rw.Write([]byte(notAuthorizedMessage))
+	})
+	app.Error(401, func(rw http.ResponseWriter) {
+		rw.Write([]byte(notAuthorizedMessage))
+	})
+
+	server := httptest.NewServer(app)
+	defer server.Close()
+	res, err := http.Get(server.URL + notAuthorizedRoute)
+	defer res.Body.Close()
+	e.Expect(err).ToBeNil()
+	e.Expect(res.StatusCode).ToEqual(401)
+	body, err := ioutil.ReadAll(res.Body)
+	e.Expect(err).ToBe(nil)
+	e.Expect(string(body)).ToEqual(notAuthorizedMessage)
+}
+
+/********************************/
+/*            FIXTURES          */
+/********************************/
 
 type Foo struct {
 	Bar string
