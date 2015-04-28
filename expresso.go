@@ -15,7 +15,7 @@ import (
 
 var (
 	// Pattern represents a route param regexp pattern
-	Pattern = "(?:\\:)(\\w+)"
+	Pattern = "(?:\\:)(\\w+)|(\\(.+\\)?)"
 	// DefaultParamPattern represents the default pattern that a route param matches
 	DefaultParamPattern = "(\\w+)"
 )
@@ -63,7 +63,8 @@ func (e Expresso) Booted() bool {
 // Can Panic!
 func (e *Expresso) ServeHTTP(responseWriter http.ResponseWriter, request *http.Request) {
 	var (
-		match                  *Route
+		matches                []*Route
+		next                   func()
 		context                *Context
 		injector               *Injector
 		responseWriterWithCode *ResponseWriterWithCode
@@ -77,7 +78,7 @@ func (e *Expresso) ServeHTTP(responseWriter http.ResponseWriter, request *http.R
 			injector.MustApply(e.errorHandlers[500])
 		}
 	}()
-	// create context and injector for context
+	// wrap responseWriter so we can access the status code
 	responseWriterWithCode = &ResponseWriterWithCode{
 		ResponseWriter: responseWriter,
 	}
@@ -98,31 +99,44 @@ func (e *Expresso) ServeHTTP(responseWriter http.ResponseWriter, request *http.R
 	if !e.Booted() {
 		e.Boot()
 	}
-	// try to match current request url with a route
-	match = e.RequestMatcher.Match(request)
-	// route not found
-	if match == nil {
+	// find all routes matching the request in the route collection
+	matches = e.RequestMatcher.MatchAll(request)
+	// no match, call 404
+	if len(matches) == 0 {
 		injector.MustApply(e.errorHandlers[404])
 		return
 	}
-	// If there are some request variables, populate the context with them
-	for i, matchedParam := range match.pattern.FindStringSubmatch(request.URL.Path)[1:] {
-		context.RequestVars[match.params[i]] = matchedParam
-	}
-	// Apply request parameter converters
-	for key, value := range context.RequestVars {
-		if match.converters[key] != nil {
-			converterInjector := NewInjector(value)
-			converterInjector.SetParent(injector)
-			res := converterInjector.MustApply(match.converters[key])
-			if len(res) > 0 {
-				context.RequestVars[key] = res[0]
+	// For the first matched route, call all its handlers
+	// if an handler in a route calls expresso.Next next() , execute the next handler
+	// When all handlers of a route have been called
+	// if there are still some matched routes and the last handler of the previous route calls next
+	// then repeat the process for the next matched route
+	next = func() {
+		if len(matches) == 0 {
+			return
+		}
+		match := matches[0]
+		matches = matches[1:]
+		// If there are some request variables, populate the context with them
+		for i, matchedParam := range match.pattern.FindStringSubmatch(request.URL.Path)[1:] {
+			context.RequestVars[match.params[i]] = matchedParam
+		}
+		// Apply request parameter converters
+		for key, value := range context.RequestVars {
+			if match.converters[key] != nil {
+				converterInjector := NewInjector(value)
+				converterInjector.SetParent(injector)
+				res := converterInjector.MustApply(match.converters[key])
+				if len(res) > 0 {
+					context.RequestVars[key] = res[0]
+				}
 			}
 		}
-
+		stack = NewStackWithInjector(injector, match.Handlers()...)
+		stack.SetNext(next)
+		stack.ServeHTTP(responseWriterWithCode, request)
 	}
-	stack = NewStackWithInjector(injector, match.Handlers()...)
-	stack.ServeHTTP(responseWriterWithCode, request)
+	next()
 	//try to get status code from response,if error, try to execute
 	// error handler
 	code := responseWriterWithCode.Code
@@ -156,7 +170,7 @@ func (e *Expresso) Injector() *Injector {
 
 // InternalServerErrorHandler executes the default 500 handler
 func InternalServerErrorHandler(err error, rw http.ResponseWriter) {
-	http.Error(rw, fmt.Sprintf("%v\r\n%v", err, debug.Stack()), http.StatusInternalServerError)
+	http.Error(rw, fmt.Sprintf("%v\r\n%s", err, debug.Stack()), http.StatusInternalServerError)
 }
 
 // NotFoundErrorHandler executes the default 404 handler
@@ -282,9 +296,13 @@ func (r *Route) Freeze() *Route {
 	routeVarsRegexp := regexp.MustCompile(Pattern)
 	matches := routeVarsRegexp.FindAllStringSubmatch(r.path, -1)
 	if matches != nil && len(matches) > 0 {
-		for _, match := range matches {
-			for _, subMatch := range match[1:] {
-				r.params = append(r.params, subMatch)
+		for i, match := range matches {
+			if match[0][0] == ':' {
+				// looks like a :param use param without :
+				r.params = append(r.params, match[1])
+			} else {
+				// looks like a valid regexp group, use the param position instead as key
+				r.params = append(r.params, fmt.Sprintf("%d", i))
 			}
 		}
 	}
@@ -296,6 +314,10 @@ func (r *Route) Freeze() *Route {
 			if r.assertions[params[0]] != "" {
 				return r.assertions[params[0]]
 			}
+		}
+		//if match looks like a valid regexp group, return match untouched
+		if match[0] == '(' && match[len(match)-1] == ')' {
+			return match
 		}
 		return DefaultParamPattern
 	})
@@ -641,6 +663,7 @@ func (s *Stack) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 type StackWithInjector struct {
 	handlers []HandlerFunction
 	injector *Injector
+	next     Next
 }
 
 // NewStackWithInjector returns a new StackWithInjector
@@ -652,6 +675,14 @@ func NewStackWithInjector(injector *Injector, handlers ...HandlerFunction) *Stac
 	return stack
 }
 
+func (s *StackWithInjector) SetNext(function Next) {
+	s.next = function
+}
+func (s *StackWithInjector) HasNext() bool {
+
+	return s.next != nil
+}
+
 // ServeHTTP serves http request
 func (s *StackWithInjector) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	var handlers = s.handlers
@@ -660,6 +691,9 @@ func (s *StackWithInjector) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	s.injector.Register(r)
 	next = func() {
 		if len(handlers) <= 0 {
+			if s.HasNext() {
+				s.next()
+			}
 			return
 		}
 		handler := handlers[0]
