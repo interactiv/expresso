@@ -102,10 +102,10 @@ func TestDelete(t *testing.T) {
 func TestMatch(t *testing.T) {
 	e := expect.New(t)
 	app := expresso.New()
-	app.Match("/foo", func(rw http.ResponseWriter) {
+	app.All("/foo", func(rw http.ResponseWriter) {
 		rw.WriteHeader(http.StatusOK)
 	}).SetMethods([]string{"GET", "POST"})
-	app.Match("/bar", func(rw http.ResponseWriter) {
+	app.All("/bar", func(rw http.ResponseWriter) {
 		rw.WriteHeader(http.StatusOK)
 	}).SetMethods([]string{"*"})
 	server := httptest.NewServer(app)
@@ -279,7 +279,7 @@ func TestStack(t *testing.T) {
 	const message = "Bienvenue"
 	e := expect.New(t)
 	app := expresso.New()
-	app.Match("/", func(next expresso.Next) {
+	app.All("/", func(next expresso.Next) {
 		next()
 	}, func(rw http.ResponseWriter) {
 		rw.Write([]byte(message))

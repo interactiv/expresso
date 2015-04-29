@@ -411,34 +411,34 @@ func (rc RouteCollection) IsFrozen() bool {
 
 // Get creates a GET route
 func (rc *RouteCollection) Get(path string, handlerFunc ...HandlerFunction) *Route {
-	route := rc.Match(path, handlerFunc...)
+	route := rc.All(path, handlerFunc...)
 	route.SetMethods([]string{"GET", "HEAD"})
 	return route
 }
 
 // Post creates a POST route
 func (rc *RouteCollection) Post(path string, handlerFunc ...HandlerFunction) *Route {
-	route := rc.Match(path, handlerFunc...)
+	route := rc.All(path, handlerFunc...)
 	route.SetMethods([]string{"POST"})
 	return route
 }
 
 // Put creates a PUT route
 func (rc *RouteCollection) Put(path string, handlerFunc ...HandlerFunction) *Route {
-	route := rc.Match(path, handlerFunc...)
+	route := rc.All(path, handlerFunc...)
 	route.SetMethods([]string{"PUT"})
 	return route
 }
 
 // Delete creates a DELETE route
 func (rc *RouteCollection) Delete(path string, handlerFunc ...HandlerFunction) *Route {
-	route := rc.Match(path, handlerFunc...)
+	route := rc.All(path, handlerFunc...)
 	route.SetMethods([]string{"DELETE"})
 	return route
 }
 
 // Match creates a route that matches all methods
-func (rc *RouteCollection) Match(path string, handlerFunc ...HandlerFunction) *Route {
+func (rc *RouteCollection) All(path string, handlerFunc ...HandlerFunction) *Route {
 	if rc.IsFrozen() {
 		panic(fmt.Sprintf("RouteCollection %v is frozen, no route can be added.", rc))
 	}
