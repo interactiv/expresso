@@ -442,8 +442,15 @@ func (r *Route) Assert(parameterName string, pattern string) *Route {
 
 // RouteCollection is a collection of routes
 type RouteCollection struct {
-	Routes []*Route
-	frozen bool
+	Routes   []*Route
+	prefix   string
+	frozen   bool
+	Children []*RouteCollection
+}
+
+func (rc *RouteCollection) setPrefix(prefix string) *RouteCollection {
+	rc.prefix = prefix
+	return rc
 }
 
 // Freeze freezes a route collection
@@ -461,10 +468,18 @@ func (rc RouteCollection) IsFrozen() bool {
 	return rc.frozen
 }
 
+// Use creates a passthrough route usefull for middlewares
 func (rc *RouteCollection) Use(path string, handlerFunctions ...HandlerFunction) *Route {
 	route := rc.All(path, handlerFunctions...)
 	route.passthrough = true
 	return route
+}
+
+// Mount mounts a route collection on a path. All routes in the route collection will be prefixed
+// with that path.
+func (rc *RouteCollection) Mount(path string, routeCollection *RouteCollection) *RouteCollection {
+	rc.Children = append(rc.Children, routeCollection)
+	return rc
 }
 
 // Get creates a GET route
