@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"reflect"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/interactiv/expect"
@@ -131,6 +132,27 @@ func TestMatch(t *testing.T) {
 	e.Expect(res.StatusCode).ToEqual(http.StatusOK)
 }
 
+func TestUse(t *testing.T) {
+	app := expresso.New()
+	e := expect.New(t)
+	app.Use("/", func(rw http.ResponseWriter, next expresso.Next) {
+		rw.Write([]byte("Use"))
+		next()
+	})
+	app.Get("/example", func(rw http.ResponseWriter) {
+		rw.Write([]byte("example"))
+	})
+	server := httptest.NewServer(app)
+	defer server.Close()
+	res, err := http.Get(server.URL + "/example")
+	defer res.Body.Close()
+	e.Expect(err).ToBeNil()
+	e.Expect(res.StatusCode).ToBe(200)
+	body, err := ioutil.ReadAll(res.Body)
+	e.Expect(err).ToBeNil()
+	e.Expect(string(body)).ToContain("Use")
+}
+
 func TestConvert(t *testing.T) {
 
 	e := expect.New(t)
@@ -211,6 +233,13 @@ func TestBind(t *testing.T) {
 	r.Freeze()
 	expect.Expect(r.Name(), t).ToBe("new_post")
 
+}
+func TestError(t *testing.T) {
+	e := expect.New(t)
+	e.Expect(func() {
+		app := expresso.New()
+		app.Error(100, func() {})
+	}).ToPanic()
 }
 
 func TestExpressoError404(t *testing.T) {
@@ -295,6 +324,31 @@ func TestStack(t *testing.T) {
 	body, err := ioutil.ReadAll(res.Body)
 	e.Expect(err).ToBeNil()
 	e.Expect(string(body)).ToEqual(message)
+}
+
+/**********************************/
+/*         CONTEXT TESTS          */
+/**********************************/
+
+func TestContextReadJson(t *testing.T) {
+	e := expect.New(t)
+	response := httptest.NewRecorder()
+	context := expresso.NewContext(response, nil)
+	type Account struct {
+		Balance float32
+	}
+	account := &Account{Balance: 1000.0}
+	context.WriteJSON(account)
+	e.Expect(response.Header().Get("Content-Type")).ToBe("application/json")
+	e.Expect(response.Body.String()).ToContain(`{"Balance":1000}`)
+	req, _ := http.NewRequest("GET", "example.com", strings.NewReader(`{"Balance":500}`))
+	context = expresso.NewContext(nil, req)
+	context.ReadJSON(account)
+	e.Expect(account.Balance).ToEqual(float32(500))
+	response = httptest.NewRecorder()
+	context = expresso.NewContext(response, nil)
+	context.WriteString("foo", "bar")
+	e.Expect(response.Body.String()).ToEqual("foobar")
 }
 
 /********************************/

@@ -4,6 +4,8 @@
 package expresso
 
 import (
+	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"net/http"
 	"os"
@@ -83,7 +85,7 @@ func (e *Expresso) ServeHTTP(responseWriter http.ResponseWriter, request *http.R
 		ResponseWriter: responseWriter,
 	}
 	// sets context and injector
-	context = NewContext(request)
+	context = NewContext(responseWriter, request)
 	injector = NewInjector(request, responseWriterWithCode, context)
 	injector.Register(injector)
 	injector.SetParent(e.Injector())
@@ -184,21 +186,66 @@ func NotFoundErrorHandler(rw http.ResponseWriter, r *http.Request) {
 
 // Context represents a request context in an expresso application
 type Context struct {
-	Request struct {
-		*http.Request
-	}
+	Request  *http.Request
+	Response http.ResponseWriter
+	// RequestVars are variables extracted from the request
 	RequestVars map[string]interface{}
-	Vars        map[string]interface{}
+	//  Vars is a map to store any data during the request response cycle
+	Vars map[string]interface{}
 }
 
 // NewContext returns a new Context
-func NewContext(request *http.Request) *Context {
+func NewContext(response http.ResponseWriter, request *http.Request) *Context {
 	ctx := &Context{
 		RequestVars: map[string]interface{}{},
 		Vars:        map[string]interface{}{},
+		Request:     request,
+		Response:    response,
 	}
-	ctx.Request.Request = request
 	return ctx
+}
+
+// Redirect redirects request
+func (ctx *Context) Redirect(path string, code int) {
+	http.Redirect(ctx.Response, ctx.Request, path, code)
+}
+
+// WriteJSON writes json to response
+func (ctx *Context) WriteJSON(v interface{}) error {
+	ctx.Response.Header().Add("Content-Type", "application/json")
+	return json.NewEncoder(ctx.Response).Encode(v)
+}
+
+// WriteXML writes xml to response
+func (ctx *Context) WriteXML(v interface{}) error {
+	ctx.Response.Header().Add("Content-Type", "text/xml")
+	return xml.NewEncoder(ctx.Response).Encode(v)
+}
+
+// WriteString writes a string to response
+func (ctx *Context) WriteString(v ...interface{}) (int, error) {
+	return fmt.Fprint(ctx.Response, v...)
+}
+
+// WriteJSONP writes a jsonp response
+func (ctx *Context) WriteJSONP(v interface{}, callbackName string) (n int, err error) {
+	ctx.Response.Header().Add("Content-Type", "application/x-javascript")
+	bytes, err := json.Marshal(v)
+	if err != nil {
+		return 0, err
+	}
+	n, err = ctx.WriteString(callbackName+"(", bytes, ")")
+	return
+}
+
+// ReadJSON reads json from request's Body
+func (ctx *Context) ReadJSON(v interface{}) error {
+	return json.NewDecoder(ctx.Request.Body).Decode(v)
+}
+
+// ReadXML reads xml from request's body
+func (ctx *Context) ReadXML(v interface{}) error {
+	return xml.NewDecoder(ctx.Request.Body).Decode(v)
 }
 
 /**********************************/
@@ -220,6 +267,8 @@ type Route struct {
 	assertions  map[string]string
 	// name is the route's name
 	name string
+	// wether the route is intended to be a middlware or not
+	passthrough bool
 }
 
 // NewRoute creates a new route with a path that handles all methods
@@ -254,7 +303,7 @@ func (r *Route) Name() string {
 // it will return []string{"category","productId"}
 func (r *Route) Params() []string { return r.params }
 
-// HandlerFunc returns the current route handler function
+// Handlers returns the current route handler function
 func (r *Route) Handlers() []HandlerFunction {
 	return r.handlerFunc
 }
@@ -262,7 +311,7 @@ func (r *Route) Handlers() []HandlerFunction {
 // HandlerFunction represent a route handler
 type HandlerFunction interface{}
 
-// SetHandlerFunc sets the route handler function.
+// SetHandlers sets the route handler function.
 //
 // Can Panic!
 func (r *Route) SetHandlers(handlerFunc ...HandlerFunction) {
@@ -322,7 +371,10 @@ func (r *Route) Freeze() *Route {
 		return DefaultParamPattern
 	})
 	// add ^ and $ and optional /? to string pattern
-	stringPattern = "^" + stringPattern + "/?$"
+	stringPattern = "^" + stringPattern + "/?"
+	if !r.passthrough {
+		stringPattern = stringPattern + "$"
+	}
 	r.pattern = regexp.MustCompile(stringPattern)
 	if r.name == "" {
 		r.name = regexp.MustCompile("\\W+").ReplaceAllString(r.path+"_"+fmt.Sprint(r.methods), "_")
@@ -409,41 +461,47 @@ func (rc RouteCollection) IsFrozen() bool {
 	return rc.frozen
 }
 
+func (rc *RouteCollection) Use(path string, handlerFunctions ...HandlerFunction) *Route {
+	route := rc.All(path, handlerFunctions...)
+	route.passthrough = true
+	return route
+}
+
 // Get creates a GET route
-func (rc *RouteCollection) Get(path string, handlerFunc ...HandlerFunction) *Route {
-	route := rc.All(path, handlerFunc...)
+func (rc *RouteCollection) Get(path string, handlerFunctions ...HandlerFunction) *Route {
+	route := rc.All(path, handlerFunctions...)
 	route.SetMethods([]string{"GET", "HEAD"})
 	return route
 }
 
 // Post creates a POST route
-func (rc *RouteCollection) Post(path string, handlerFunc ...HandlerFunction) *Route {
-	route := rc.All(path, handlerFunc...)
+func (rc *RouteCollection) Post(path string, handlerFunctions ...HandlerFunction) *Route {
+	route := rc.All(path, handlerFunctions...)
 	route.SetMethods([]string{"POST"})
 	return route
 }
 
 // Put creates a PUT route
-func (rc *RouteCollection) Put(path string, handlerFunc ...HandlerFunction) *Route {
-	route := rc.All(path, handlerFunc...)
+func (rc *RouteCollection) Put(path string, handlerFunctions ...HandlerFunction) *Route {
+	route := rc.All(path, handlerFunctions...)
 	route.SetMethods([]string{"PUT"})
 	return route
 }
 
 // Delete creates a DELETE route
-func (rc *RouteCollection) Delete(path string, handlerFunc ...HandlerFunction) *Route {
-	route := rc.All(path, handlerFunc...)
+func (rc *RouteCollection) Delete(path string, handlerFunctions ...HandlerFunction) *Route {
+	route := rc.All(path, handlerFunctions...)
 	route.SetMethods([]string{"DELETE"})
 	return route
 }
 
-// Match creates a route that matches all methods
-func (rc *RouteCollection) All(path string, handlerFunc ...HandlerFunction) *Route {
+// All creates a route that matches all methods
+func (rc *RouteCollection) All(path string, handlerFunctions ...HandlerFunction) *Route {
 	if rc.IsFrozen() {
 		panic(fmt.Sprintf("RouteCollection %v is frozen, no route can be added.", rc))
 	}
 	route := NewRoute(path)
-	route.SetHandlers(handlerFunc...)
+	route.SetHandlers(handlerFunctions...)
 	rc.Routes = append(rc.Routes, route)
 	return route
 }
@@ -451,6 +509,8 @@ func (rc *RouteCollection) All(path string, handlerFunc ...HandlerFunction) *Rou
 /**********************************/
 /*         REQUEST MATCHER        */
 /**********************************/
+
+// RequestMatcher match request path to route pattern
 type RequestMatcher struct {
 	routeCollection *RouteCollection
 }
@@ -458,13 +518,14 @@ type RequestMatcher struct {
 func NewRequestMatcher(routeCollection *RouteCollection) *RequestMatcher {
 	return &RequestMatcher{routeCollection}
 }
+
 func (rm *RequestMatcher) Match(request *http.Request) *Route {
 	// try to match current request url with a route
 	if len(rm.routeCollection.Routes) > 0 {
 		for _, route := range rm.routeCollection.Routes {
 			if route.pattern.MatchString(request.URL.Path) && route.MethodMatch(request.Method) {
 				return route
-				break
+
 			}
 		}
 	}
