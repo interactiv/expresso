@@ -725,6 +725,20 @@ func MustBeCallable(potentialFunction interface{}) {
 	}
 }
 
+// Must will panic if err is not nil
+func Must(err error) {
+	if err != nil {
+		panic(err)
+	}
+}
+
+func MustWithResult(result interface{}, err error) interface{} {
+	if err != nil {
+		panic(err)
+	}
+	return result
+}
+
 /**********************************/
 /*             TYPEDEFS           */
 /**********************************/

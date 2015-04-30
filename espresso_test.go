@@ -389,6 +389,17 @@ func TestContextReadJson(t *testing.T) {
 	e.Expect(response.Body.String()).ToEqual("foobar")
 }
 
+/**********************************/
+/*           UTILS TESTS          */
+/**********************************/
+
+func TestMustWithResult(t *testing.T) {
+	b := func() (*Foo, error) {
+		return new(Foo), nil
+	}
+	_ = expresso.MustWithResult(b()).(*Foo)
+}
+
 /********************************/
 /*            FIXTURES          */
 /********************************/
@@ -409,6 +420,8 @@ type Person struct {
 	id   int
 	name string
 }
+
+type Foo_Bar struct{}
 
 func (p Person) Find(id int) *Person {
 	var (
