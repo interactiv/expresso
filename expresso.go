@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"reflect"
@@ -445,17 +446,26 @@ func (r *Route) Assert(parameterName string, pattern string) *Route {
 
 // RouteCollection is a collection of routes
 type RouteCollection struct {
-	Routes   []*Route
-	prefix   string
-	frozen   bool
-	Children []*RouteCollection
+	Routes    []*Route
+	prefix    string
+	frozen    bool
+	Children  []*RouteCollection
+	hasParent bool
 }
 
+// NewRouteCollection creates a new RouteCollection
 func NewRouteCollection() *RouteCollection {
 	return &RouteCollection{Routes: []*Route{}, Children: []*RouteCollection{}}
 }
 
+func (rc *RouteCollection) mustNotBeFrozen() {
+	if rc.frozen {
+		log.Panic("You cannot modify a route collection that has been frozen ", rc)
+	}
+}
+
 func (rc *RouteCollection) setPrefix(prefix string) *RouteCollection {
+	rc.mustNotBeFrozen()
 	if prefix != "" && prefix[0] != '/' {
 		prefix = "/" + prefix
 	}
@@ -502,8 +512,12 @@ func (rc *RouteCollection) Use(path string, handlerFunctions ...HandlerFunction)
 // Mount mounts a route collection on a path. All routes in the route collection will be prefixed
 // with that path.
 func (rc *RouteCollection) Mount(path string, routeCollection *RouteCollection) *RouteCollection {
-	rc.Children = append(rc.Children, routeCollection)
-	routeCollection.setPrefix(path)
+	if !routeCollection.hasParent {
+
+		rc.Children = append(rc.Children, routeCollection)
+		routeCollection.setPrefix(path)
+		routeCollection.hasParent = true
+	}
 	return rc
 }
 
@@ -537,9 +551,7 @@ func (rc *RouteCollection) Delete(path string, handlerFunctions ...HandlerFuncti
 
 // All creates a route that matches all methods
 func (rc *RouteCollection) All(path string, handlerFunctions ...HandlerFunction) *Route {
-	if rc.IsFrozen() {
-		panic(fmt.Sprintf("RouteCollection %v is frozen, no route can be added.", rc))
-	}
+	rc.mustNotBeFrozen()
 	route := NewRoute(path)
 	route.SetHandlers(handlerFunctions...)
 	rc.Routes = append(rc.Routes, route)
@@ -547,18 +559,25 @@ func (rc *RouteCollection) All(path string, handlerFunctions ...HandlerFunction)
 }
 
 /**********************************/
-/*         REQUEST MATCHER        */
+/*            MATCHERS            */
 /**********************************/
+
+// Matcher is a type something that can match a http.Request
+type Matcher interface {
+	Match(*http.Request) bool
+}
 
 // RequestMatcher match request path to route pattern
 type RequestMatcher struct {
 	routeCollection *RouteCollection
 }
 
+// NewRequestMatcher returns a new RequestMatcher
 func NewRequestMatcher(routeCollection *RouteCollection) *RequestMatcher {
 	return &RequestMatcher{routeCollection}
 }
 
+// Match returns a route that matches a http.Request
 func (rm *RequestMatcher) Match(request *http.Request) *Route {
 	// try to match current request url with a route
 	if len(rm.routeCollection.Routes) > 0 {
@@ -572,6 +591,7 @@ func (rm *RequestMatcher) Match(request *http.Request) *Route {
 	return nil
 }
 
+// MatchAll matches all routes matching the request in the route collection
 func (rm *RequestMatcher) MatchAll(request *http.Request) (matches []*Route) {
 	if len(rm.routeCollection.Routes) > 0 {
 		for _, route := range rm.routeCollection.Routes {
@@ -728,6 +748,7 @@ type Next func()
 /*        MIDDLEWARE STACK        */
 /**********************************/
 
+// HandlerFuncWithNext describes a typical middleware that takes a next function
 type HandlerFuncWithNext func(http.ResponseWriter, *http.Request, http.HandlerFunc)
 
 // Stack is a middleware stack
@@ -776,9 +797,12 @@ func NewStackWithInjector(injector *Injector, handlers ...HandlerFunction) *Stac
 	return stack
 }
 
+// SetNext sets the next function to call when there is no handler left in the stack
 func (s *StackWithInjector) SetNext(function Next) {
 	s.next = function
 }
+
+// HasNext returns true if the stack has a next function
 func (s *StackWithInjector) HasNext() bool {
 
 	return s.next != nil
