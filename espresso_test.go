@@ -44,6 +44,36 @@ func TestHelloWord(t *testing.T) {
 	expect.Expect(w.Body.String(), t).ToBe("Hello foo")
 }
 
+func TestOptionalRequestVariable(t *testing.T) {
+	app := expresso.New()
+	e := expect.New(t)
+	app.Get("/:param?", func(ctx *expresso.Context) {
+		ctx.WriteString("param: ", ctx.RequestVars["param"])
+	})
+	app.Get("/:param1?/:param2", func(ctx *expresso.Context) {
+		ctx.WriteString(ctx.RequestVars["param1"], ctx.RequestVars["param2"])
+	})
+	server := httptest.NewServer(app)
+	defer server.Close()
+	res := expresso.MustWithResult(http.Get(server.URL + "/example")).(*http.Response)
+	defer res.Body.Close()
+	e.Expect(res.StatusCode).ToBe(200)
+	body := string(expresso.MustWithResult(ioutil.ReadAll(res.Body)).([]byte))
+	e.Expect(body).ToContain("example")
+	res = expresso.MustWithResult(http.Get(server.URL + "/")).(*http.Response)
+	defer res.Body.Close()
+	e.Expect(res.StatusCode).ToBe(200)
+	body = string(expresso.MustWithResult(ioutil.ReadAll(res.Body)).([]byte))
+	e.Expect(body).Not().ToContain("example")
+	e.Expect(body).ToContain("param:")
+	res = expresso.MustWithResult(http.Get((server.URL + "/job/salary"))).(*http.Response)
+	defer res.Body.Close()
+	e.Expect(res.StatusCode).ToBe(200)
+	body = string(expresso.MustWithResult(ioutil.ReadAll(res.Body)).([]byte))
+	e.Expect(body).ToContain("job")
+	e.Expect(body).ToContain("salary")
+}
+
 func TestPost(t *testing.T) {
 
 	app := expresso.New()
@@ -420,8 +450,6 @@ type Person struct {
 	id   int
 	name string
 }
-
-type Foo_Bar struct{}
 
 func (p Person) Find(id int) *Person {
 	var (

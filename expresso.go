@@ -18,7 +18,7 @@ import (
 
 var (
 	// Pattern represents a route param regexp pattern
-	Pattern = "(?:\\:)(\\w+)|(\\(.+\\)?)"
+	Pattern = "(?:\\:)(\\w+)(\\?)?|(\\(.+\\)?)"
 	// DefaultParamPattern represents the default pattern that a route param matches
 	DefaultParamPattern = "(\\w+)"
 )
@@ -367,6 +367,10 @@ func (r *Route) Freeze() *Route {
 		//if match looks like a valid regexp group, return match untouched
 		if match[0] == '(' && match[len(match)-1] == ')' {
 			return match
+		}
+		//if match ends with ? , match is optional
+		if strings.HasSuffix(match, "?") {
+			return DefaultParamPattern + "?"
 		}
 		return DefaultParamPattern
 	})
