@@ -39,7 +39,7 @@ type Expresso struct {
 // New creates an expresso application
 func New() *Expresso {
 	expresso := &Expresso{
-		RouteCollection: &RouteCollection{Routes: []*Route{}},
+		RouteCollection: NewRouteCollection(),
 		injector:        NewInjector(),
 		errorHandlers:   map[int]HandlerFunction{},
 	}
@@ -74,7 +74,6 @@ func (e *Expresso) ServeHTTP(responseWriter http.ResponseWriter, request *http.R
 	)
 	defer func() {
 		if err := recover(); err != nil {
-			//log.Println(err)
 			os.Stderr.WriteString(fmt.Sprint(err))
 			injector.Register(err)
 			injector.MustApply(e.errorHandlers[500])
@@ -371,7 +370,11 @@ func (r *Route) Freeze() *Route {
 		return DefaultParamPattern
 	})
 	// add ^ and $ and optional /? to string pattern
-	stringPattern = "^" + stringPattern + "/?"
+	if strings.HasSuffix(stringPattern, "/") {
+		stringPattern = "^" + stringPattern + "?"
+	} else {
+		stringPattern = "^" + stringPattern + "/?"
+	}
 	if !r.passthrough {
 		stringPattern = stringPattern + "$"
 	}
@@ -448,19 +451,40 @@ type RouteCollection struct {
 	Children []*RouteCollection
 }
 
+func NewRouteCollection() *RouteCollection {
+	return &RouteCollection{Routes: []*Route{}, Children: []*RouteCollection{}}
+}
+
 func (rc *RouteCollection) setPrefix(prefix string) *RouteCollection {
+	if prefix != "" && prefix[0] != '/' {
+		prefix = "/" + prefix
+	}
 	rc.prefix = prefix
 	return rc
 }
 
 // Freeze freezes a route collection
 func (rc *RouteCollection) Freeze() {
-	if rc.IsFrozen() == false {
-		rc.frozen = true
-		for _, route := range rc.Routes {
-			route.Freeze()
+
+	if rc.IsFrozen() == true {
+		return
+	}
+
+	for _, route := range rc.Routes {
+		route.path = rc.prefix + route.path
+		route.Freeze()
+	}
+
+	if len(rc.Children) > 0 {
+
+		for _, routeCollection := range rc.Children {
+			routeCollection.setPrefix(rc.prefix + routeCollection.prefix).Freeze()
+			for _, route := range routeCollection.Routes {
+				rc.Routes = append(rc.Routes, route)
+			}
 		}
 	}
+	rc.frozen = true
 }
 
 // IsFrozen returns true if the route collection is frozen
@@ -479,6 +503,7 @@ func (rc *RouteCollection) Use(path string, handlerFunctions ...HandlerFunction)
 // with that path.
 func (rc *RouteCollection) Mount(path string, routeCollection *RouteCollection) *RouteCollection {
 	rc.Children = append(rc.Children, routeCollection)
+	routeCollection.setPrefix(path)
 	return rc
 }
 

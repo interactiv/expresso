@@ -234,6 +234,7 @@ func TestBind(t *testing.T) {
 	expect.Expect(r.Name(), t).ToBe("new_post")
 
 }
+
 func TestError(t *testing.T) {
 	e := expect.New(t)
 	e.Expect(func() {
@@ -324,6 +325,43 @@ func TestStack(t *testing.T) {
 	body, err := ioutil.ReadAll(res.Body)
 	e.Expect(err).ToBeNil()
 	e.Expect(string(body)).ToEqual(message)
+}
+
+/**********************************/
+/*     ROUTE COLLECTION TESTS     */
+/**********************************/
+
+func TestRouteCollectionMount(t *testing.T) {
+	e := expect.New(t)
+	app := expresso.New()
+	subRoutes := expresso.NewRouteCollection()
+	subRoutes.Use("/", func(ctx *expresso.Context, next expresso.Next) {
+		ctx.WriteString("Use")
+		next()
+	})
+	subRoutes.All("/", func(ctx *expresso.Context) {
+		ctx.WriteString("SubRoutes")
+	})
+	app.Mount("/subroutes", subRoutes)
+	subRoutes2 := expresso.NewRouteCollection()
+	subRoutes2.All("/", func(ctx *expresso.Context) {
+		ctx.WriteString("SubSubRoutes")
+	})
+	subRoutes.Mount("/subroutes", subRoutes2)
+	server := httptest.NewServer(app)
+	defer server.Close()
+	res, err := http.Get(server.URL + "/subroutes")
+	defer res.Body.Close()
+	e.Expect(err).ToBeNil()
+	e.Expect(res.StatusCode).ToBe(200)
+	body, err := ioutil.ReadAll(res.Body)
+	e.Expect(string(body)).ToBe("UseSubRoutes")
+	res, err = http.Post(server.URL+"/subroutes/subroutes", "application/x-www-form-urlencoded", nil)
+	defer res.Body.Close()
+	e.Expect(err).ToBeNil()
+	e.Expect(res.StatusCode).ToBe(200)
+	body, _ = ioutil.ReadAll(res.Body)
+	e.Expect(string(body)).ToEqual("UseSubSubRoutes")
 }
 
 /**********************************/
