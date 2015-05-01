@@ -9,3 +9,5 @@ Author:  mparaiso <mparaiso@online.fr>
 Year: 2015
 
 License: MIT
+
+version: 0.2
