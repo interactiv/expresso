@@ -1,3 +1,6 @@
+// Copyrights 2015 mparaiso <mparaiso@online.fr>
+// License MIT
+
 package expresso_test
 
 import (
@@ -24,29 +27,22 @@ const formContentType = "application/x-www-form-urlencoded"
 
 func TestHelloWord(t *testing.T) {
 
-	var (
-		req *http.Request
-		err error
-	)
 	app := expresso.New()
-	app.Get("/", func(rw http.ResponseWriter) {
-		rw.Write([]byte("Hello"))
-	})
 	app.Get("/hello/:name", func(ctx *expresso.Context, rw http.ResponseWriter) {
 		fmt.Fprintf(rw, "Hello %s", ctx.RequestVars["name"])
 	})
-	w := httptest.NewRecorder()
-	if req, err = http.NewRequest("GET", "http://foobar.com/hello/foo", nil); err != nil {
-		t.Fatal(err)
-	}
-	app.ServeHTTP(w, req)
-	expect.Expect(w.Code, t).ToBe(200)
-	expect.Expect(w.Body.String(), t).ToBe("Hello foo")
+	server := httptest.NewServer(app)
+	defer server.Close()
+	res := expresso.MustWithResult(http.Get(server.URL + "/hello/foo")).(*http.Response)
+	defer res.Body.Close()
+	expect.Expect(res.StatusCode, t).ToBe(200)
+	expect.Expect(string(expresso.MustWithResult(ioutil.ReadAll(res.Body)).([]byte)), t).ToBe("Hello foo")
 }
 
 func TestOptionalRequestVariable(t *testing.T) {
 	app := expresso.New()
 	e := expect.New(t)
+	app.Use("/", func(next expresso.Next) { next() })
 	app.Get("/:param?", func(ctx *expresso.Context) {
 		ctx.WriteString("param: ", ctx.RequestVars["param"])
 	})
@@ -72,6 +68,10 @@ func TestOptionalRequestVariable(t *testing.T) {
 	body = string(expresso.MustWithResult(ioutil.ReadAll(res.Body)).([]byte))
 	e.Expect(body).ToContain("job")
 	e.Expect(body).ToContain("salary")
+	res = expresso.MustWithResult(http.Get(server.URL + "/house/room/door")).(*http.Response)
+	defer res.Body.Close()
+	e.Expect(res.StatusCode).ToBe(404)
+	//body =string(expresso.MustWithResult(ioutil.ReadAll(res.Body)).([]byte))
 }
 
 func TestPost(t *testing.T) {
@@ -316,45 +316,21 @@ func TestExpressoError401(t *testing.T) {
 	)
 	e := expect.New(t)
 	app := expresso.New()
-	app.Get(notAuthorizedRoute, func(rw http.ResponseWriter) {
+	app.Get(notAuthorizedRoute, func(rw http.ResponseWriter, next expresso.Next) {
 		rw.WriteHeader(http.StatusUnauthorized)
-		//rw.Write([]byte(notAuthorizedMessage))
+		next()
 	})
 	app.Error(401, func(rw http.ResponseWriter) {
 		rw.Write([]byte(notAuthorizedMessage))
 	})
-
 	server := httptest.NewServer(app)
 	defer server.Close()
 	res, err := http.Get(server.URL + notAuthorizedRoute)
 	defer res.Body.Close()
 	e.Expect(err).ToBeNil()
 	e.Expect(res.StatusCode).ToEqual(401)
-	body, err := ioutil.ReadAll(res.Body)
-	e.Expect(err).ToBe(nil)
-	e.Expect(string(body)).ToEqual(notAuthorizedMessage)
-}
-
-func TestStack(t *testing.T) {
-	const message = "Bienvenue"
-	e := expect.New(t)
-	app := expresso.New()
-	app.All("/", func(next expresso.Next) {
-		next()
-	}, func(rw http.ResponseWriter) {
-		rw.Write([]byte(message))
-	}, func(rw http.ResponseWriter) {
-		rw.Write([]byte("foo"))
-	})
-	server := httptest.NewServer(app)
-	defer server.Close()
-	res, err := http.Get(server.URL + "/")
-	defer res.Body.Close()
-	e.Expect(err).ToBeNil()
-	e.Expect(res.StatusCode).ToBe(200)
-	body, err := ioutil.ReadAll(res.Body)
-	e.Expect(err).ToBeNil()
-	e.Expect(string(body)).ToEqual(message)
+	body := string(expresso.MustWithResult(ioutil.ReadAll(res.Body)).([]byte))
+	e.Expect(body).ToEqual(notAuthorizedMessage)
 }
 
 /**********************************/

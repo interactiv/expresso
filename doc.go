@@ -1,10 +1,11 @@
 // Copyrights 2015 mparaiso <mparaiso@online.fr>
 // License MIT
 
-// expresso
+// Expresso 
+// 
+// version 0.1
 //
 // The most awesome nano webframework for Go
-//
 //
 // Quick start:
 //

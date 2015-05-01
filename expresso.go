@@ -1,4 +1,4 @@
-// Copyright 2015 <mparaiso@online.fr>
+// Copyrights 2015 mparaiso <mparaiso@online.fr>
 // License MIT
 
 package expresso
@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"os"
 	"reflect"
 	"regexp"
 	"runtime/debug"
@@ -51,7 +50,7 @@ func New() *Expresso {
 // Boot boots the application
 func (e *Expresso) Boot() {
 	if !e.Booted() {
-		e.RouteCollection.Freeze()
+		e.RouteCollection.Flush()
 		e.booted = true
 	}
 }
@@ -67,15 +66,13 @@ func (e Expresso) Booted() bool {
 func (e *Expresso) ServeHTTP(responseWriter http.ResponseWriter, request *http.Request) {
 	var (
 		matches                []*Route
-		next                   func()
+		next                   Next
 		context                *Context
 		injector               *Injector
 		responseWriterWithCode *ResponseWriterWithCode
-		stack                  *StackWithInjector
 	)
 	defer func() {
 		if err := recover(); err != nil {
-			os.Stderr.WriteString(fmt.Sprint(err))
 			injector.Register(err)
 			injector.MustApply(e.errorHandlers[500])
 		}
@@ -103,18 +100,23 @@ func (e *Expresso) ServeHTTP(responseWriter http.ResponseWriter, request *http.R
 	}
 	// find all routes matching the request in the route collection
 	matches = e.RequestMatcher.MatchAll(request)
-	// no match, call 404
-	if len(matches) == 0 {
-		injector.MustApply(e.errorHandlers[404])
-		return
-	}
+
 	// For the first matched route, call all its handlers
 	// if an handler in a route calls expresso.Next next() , execute the next handler
 	// When all handlers of a route have been called
 	// if there are still some matched routes and the last handler of the previous route calls next
 	// then repeat the process for the next matched route
 	next = func() {
+		if code := responseWriterWithCode.Code; code > 399 {
+			if e.errorHandlers[code] != nil {
+				injector.MustApply(e.errorHandlers[code])
+			} else {
+				http.Error(responseWriterWithCode, http.StatusText(code), code)
+			}
+			return
+		}
 		if len(matches) == 0 {
+			injector.MustApply(e.errorHandlers[404])
 			return
 		}
 		match := matches[0]
@@ -134,17 +136,12 @@ func (e *Expresso) ServeHTTP(responseWriter http.ResponseWriter, request *http.R
 				}
 			}
 		}
-		stack = NewStackWithInjector(injector, match.Handlers()...)
-		stack.SetNext(next)
-		stack.ServeHTTP(responseWriterWithCode, request)
+		injector.Register(next)
+		context.next = next
+		injector.MustApply(match.Handler())
 	}
 	next()
-	//try to get status code from response,if error, try to execute
-	// error handler
-	code := responseWriterWithCode.Code
-	if code > 399 && e.errorHandlers[code] != nil {
-		injector.MustApply(e.errorHandlers[code])
-	}
+
 }
 
 // Error sets an error handler given an error code.
@@ -192,6 +189,7 @@ type Context struct {
 	RequestVars map[string]interface{}
 	//  Vars is a map to store any data during the request response cycle
 	Vars map[string]interface{}
+	next Next
 }
 
 // NewContext returns a new Context
@@ -203,6 +201,9 @@ func NewContext(response http.ResponseWriter, request *http.Request) *Context {
 		Response:    response,
 	}
 	return ctx
+}
+func (ctx *Context) Next() {
+	ctx.next()
 }
 
 // Redirect redirects request
@@ -260,7 +261,7 @@ type Route struct {
 	pattern *regexp.Regexp
 	// path is the path as string
 	path        string
-	handlerFunc []HandlerFunction
+	handlerFunc HandlerFunction
 	params      []string
 	frozen      bool
 	converters  map[string]interface{}
@@ -304,7 +305,7 @@ func (r *Route) Name() string {
 func (r *Route) Params() []string { return r.params }
 
 // Handlers returns the current route handler function
-func (r *Route) Handlers() []HandlerFunction {
+func (r *Route) Handler() HandlerFunction {
 	return r.handlerFunc
 }
 
@@ -314,13 +315,11 @@ type HandlerFunction interface{}
 // SetHandlers sets the route handler function.
 //
 // Can Panic!
-func (r *Route) SetHandlers(handlerFunc ...HandlerFunction) {
+func (r *Route) SetHandler(handlerFunc HandlerFunction) {
 	if r.IsFrozen() {
 		return
 	}
-	for _, function := range handlerFunc {
-		MustBeCallable(function)
-	}
+	MustBeCallable(handlerFunc)
 	r.handlerFunc = handlerFunc
 }
 
@@ -357,10 +356,14 @@ func (r *Route) Freeze() *Route {
 	}
 	// replace route variables either with the default variable pattern or an assertion corresponding to the route variable
 	stringPattern := routeVarsRegexp.ReplaceAllStringFunc(r.path, func(match string) string {
-		// if an assertion is found, replace with the assertion
+		// if an assertion is found, replace with the assertion pattern
 		params := regexp.MustCompile("\\w+").FindAllString(match, -1)
 		if len(params) > 0 {
 			if r.assertions[params[0]] != "" {
+				// optional ?
+				if strings.HasSuffix(match, "?") {
+					return r.assertions[params[0]] + "?"
+				}
 				return r.assertions[params[0]]
 			}
 		}
@@ -478,7 +481,7 @@ func (rc *RouteCollection) setPrefix(prefix string) *RouteCollection {
 }
 
 // Freeze freezes a route collection
-func (rc *RouteCollection) Freeze() {
+func (rc *RouteCollection) Flush() {
 
 	if rc.IsFrozen() == true {
 		return
@@ -492,10 +495,11 @@ func (rc *RouteCollection) Freeze() {
 	if len(rc.Children) > 0 {
 
 		for _, routeCollection := range rc.Children {
-			routeCollection.setPrefix(rc.prefix + routeCollection.prefix).Freeze()
+			routeCollection.setPrefix(rc.prefix + routeCollection.prefix).Flush()
 			for _, route := range routeCollection.Routes {
 				rc.Routes = append(rc.Routes, route)
 			}
+			routeCollection.Routes = []*Route{}
 		}
 	}
 	rc.frozen = true
@@ -507,8 +511,8 @@ func (rc RouteCollection) IsFrozen() bool {
 }
 
 // Use creates a passthrough route usefull for middlewares
-func (rc *RouteCollection) Use(path string, handlerFunctions ...HandlerFunction) *Route {
-	route := rc.All(path, handlerFunctions...)
+func (rc *RouteCollection) Use(path string, handlerFunction HandlerFunction) *Route {
+	route := rc.All(path, handlerFunction)
 	route.passthrough = true
 	return route
 }
@@ -526,38 +530,38 @@ func (rc *RouteCollection) Mount(path string, routeCollection *RouteCollection) 
 }
 
 // Get creates a GET route
-func (rc *RouteCollection) Get(path string, handlerFunctions ...HandlerFunction) *Route {
-	route := rc.All(path, handlerFunctions...)
+func (rc *RouteCollection) Get(path string, handlerFunction HandlerFunction) *Route {
+	route := rc.All(path, handlerFunction)
 	route.SetMethods([]string{"GET", "HEAD"})
 	return route
 }
 
 // Post creates a POST route
-func (rc *RouteCollection) Post(path string, handlerFunctions ...HandlerFunction) *Route {
-	route := rc.All(path, handlerFunctions...)
+func (rc *RouteCollection) Post(path string, handlerFunction HandlerFunction) *Route {
+	route := rc.All(path, handlerFunction)
 	route.SetMethods([]string{"POST"})
 	return route
 }
 
 // Put creates a PUT route
-func (rc *RouteCollection) Put(path string, handlerFunctions ...HandlerFunction) *Route {
-	route := rc.All(path, handlerFunctions...)
+func (rc *RouteCollection) Put(path string, handlerFunction HandlerFunction) *Route {
+	route := rc.All(path, handlerFunction)
 	route.SetMethods([]string{"PUT"})
 	return route
 }
 
 // Delete creates a DELETE route
-func (rc *RouteCollection) Delete(path string, handlerFunctions ...HandlerFunction) *Route {
-	route := rc.All(path, handlerFunctions...)
+func (rc *RouteCollection) Delete(path string, handlerFunction HandlerFunction) *Route {
+	route := rc.All(path, handlerFunction)
 	route.SetMethods([]string{"DELETE"})
 	return route
 }
 
 // All creates a route that matches all methods
-func (rc *RouteCollection) All(path string, handlerFunctions ...HandlerFunction) *Route {
+func (rc *RouteCollection) All(path string, handlerFunction HandlerFunction) *Route {
 	rc.mustNotBeFrozen()
 	route := NewRoute(path)
-	route.SetHandlers(handlerFunctions...)
+	route.SetHandler(handlerFunction)
 	rc.Routes = append(rc.Routes, route)
 	return route
 }
@@ -761,89 +765,3 @@ func (r *ResponseWriterWithCode) WriteHeader(code int) {
 
 // Next represents a function
 type Next func()
-
-/**********************************/
-/*        MIDDLEWARE STACK        */
-/**********************************/
-
-// HandlerFuncWithNext describes a typical middleware that takes a next function
-type HandlerFuncWithNext func(http.ResponseWriter, *http.Request, http.HandlerFunc)
-
-// Stack is a middleware stack
-type Stack struct {
-	handlers []HandlerFuncWithNext
-}
-
-// NewStack returns a new Stack
-func NewStack(handlers ...HandlerFuncWithNext) *Stack {
-	return &Stack{handlers}
-}
-
-// NewStackFunc returns a HandlerFunc ready to be used with http;HandleFunc
-func NewStackFunc(handlers ...HandlerFuncWithNext) http.HandlerFunc {
-	return NewStack(handlers...).ServeHTTP
-}
-
-// ServeHTTP serves http requests
-func (s *Stack) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
-	var handlers = s.handlers
-	var next http.HandlerFunc
-	next = func(rw http.ResponseWriter, r *http.Request) {
-		if len(handlers) <= 0 {
-			return
-		}
-		handler := handlers[0]
-		handlers = handlers[1:]
-		handler(rw, r, next)
-	}
-	next(rw, r)
-}
-
-// StackWithInjector is a middleware stack with a dependency injection container
-type StackWithInjector struct {
-	handlers []HandlerFunction
-	injector *Injector
-	next     Next
-}
-
-// NewStackWithInjector returns a new StackWithInjector
-func NewStackWithInjector(injector *Injector, handlers ...HandlerFunction) *StackWithInjector {
-	stack := &StackWithInjector{}
-	stack.handlers = handlers
-	stack.injector = NewInjector()
-	stack.injector.SetParent(injector)
-	return stack
-}
-
-// SetNext sets the next function to call when there is no handler left in the stack
-func (s *StackWithInjector) SetNext(function Next) {
-	s.next = function
-}
-
-// HasNext returns true if the stack has a next function
-func (s *StackWithInjector) HasNext() bool {
-
-	return s.next != nil
-}
-
-// ServeHTTP serves http request
-func (s *StackWithInjector) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
-	var handlers = s.handlers
-	var next Next
-	s.injector.Register(rw)
-	s.injector.Register(r)
-	next = func() {
-		if len(handlers) <= 0 {
-			if s.HasNext() {
-				s.next()
-			}
-			return
-		}
-		handler := handlers[0]
-		handlers = handlers[1:]
-		MustBeCallable(handler)
-		s.injector.MustApply(handler)
-	}
-	s.injector.Register(next)
-	next()
-}
