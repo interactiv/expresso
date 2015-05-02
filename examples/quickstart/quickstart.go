@@ -1,3 +1,6 @@
+// Copyrights 2015 mparaiso <mparaiso@online.fr>
+// License MIT
+
 package main
 
 import (

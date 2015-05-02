@@ -3,7 +3,7 @@
 
 // Expresso
 //
-// version 0.2
+// version 0.3
 //
 // The most awesome nano webframework for Go
 //
