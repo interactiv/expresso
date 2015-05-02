@@ -35,7 +35,7 @@ version: 0.3
 			log.Println("lapse: ",time.Now().Sub(t0))
 		})
 		
-		// creates are route handler with a route variable
+		// creates a route handler with a route variable
 		app.Get("/greet/:name",func(ctx *expresso.Context,rw http.ReponseWriter){
 			rw.Write([]byte("Hello "+ctx.RequestVars["name"]))
 		})
