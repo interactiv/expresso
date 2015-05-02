@@ -10,7 +10,7 @@ Year: 2015
 
 License: MIT
 
-version: 0.3
+version: 0.4
 
 ###Quick start:
 
