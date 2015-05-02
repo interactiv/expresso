@@ -337,6 +337,14 @@ func TestExpressoError401(t *testing.T) {
 /*     ROUTE COLLECTION TESTS     */
 /**********************************/
 
+func TestAddRoute(t *testing.T) {
+	rc := expresso.NewRouteCollection()
+	route := expresso.NewRoute("/")
+	rc.AddRoute(route)
+	e := expect.New(t)
+	e.Expect(len(rc.Routes)).ToBe(1)
+}
+
 func TestRouteCollectionMount(t *testing.T) {
 	e := expect.New(t)
 	app := expresso.New()

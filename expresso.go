@@ -501,6 +501,10 @@ type RouteCollection struct {
 func NewRouteCollection() *RouteCollection {
 	return &RouteCollection{Routes: []*Route{}, Children: []*RouteCollection{}}
 }
+func (rc *RouteCollection) AddRoute(r *Route) *RouteCollection {
+	rc.Routes = append(rc.Routes, r)
+	return rc
+}
 
 func (rc *RouteCollection) mustNotBeFrozen() {
 	if rc.frozen {
