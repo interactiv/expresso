@@ -30,6 +30,7 @@ var (
 type Expresso struct {
 	debug bool
 	*RouteCollection
+	*EventEmitter
 	RequestMatcher *RequestMatcher
 	booted         bool
 	injector       *Injector
@@ -40,6 +41,7 @@ type Expresso struct {
 func New() *Expresso {
 	expresso := &Expresso{
 		RouteCollection: NewRouteCollection(),
+		EventEmitter:    NewEventEmitter(),
 		injector:        NewInjector(),
 		errorHandlers:   map[int]HandlerFunction{},
 	}
@@ -85,7 +87,7 @@ func (e *Expresso) ServeHTTP(responseWriter http.ResponseWriter, request *http.R
 	}
 	// sets context and injector
 	context = NewContext(responseWriterWithCode, request)
-	requestInjector = NewInjector(request, responseWriterWithCode, context)
+	requestInjector = NewInjector(request, responseWriterWithCode, context, e.EventEmitter)
 	requestInjector.Register(requestInjector)
 	requestInjector.SetParent(e.Injector())
 	if e.errorHandlers[500] == nil {
@@ -223,9 +225,15 @@ func NewContext(response http.ResponseWriter, request *http.Request) *Context {
 	}
 	return ctx
 }
-func (ctx *Context) Status(status int) {
+
+// SetStatus sets the the status code
+func (ctx *Context) SetStatus(status int) {
+
 	ctx.Response.WriteHeader(status)
+
 }
+
+// Next calls the next middleware in the middleware chain
 func (ctx *Context) Next() {
 	ctx.next()
 }
@@ -330,7 +338,7 @@ func (r *Route) Name() string {
 // it will return []string{"category","productId"}
 func (r *Route) Params() []string { return r.params }
 
-// Handlers returns the current route handler function
+// Handler returns the current route handler function
 func (r *Route) Handler() HandlerFunction {
 	return r.handlerFunc
 }
@@ -338,7 +346,7 @@ func (r *Route) Handler() HandlerFunction {
 // HandlerFunction represent a route handler
 type HandlerFunction interface{}
 
-// SetHandlers sets the route handler function.
+// SetHandler sets the route handler function.
 //
 // Can Panic!
 func (r *Route) SetHandler(handlerFunc HandlerFunction) {
@@ -501,6 +509,8 @@ type RouteCollection struct {
 func NewRouteCollection() *RouteCollection {
 	return &RouteCollection{Routes: []*Route{}, Children: []*RouteCollection{}}
 }
+
+// AddRoute adds a route to the route collection
 func (rc *RouteCollection) AddRoute(r *Route) *RouteCollection {
 	rc.Routes = append(rc.Routes, r)
 	return rc
@@ -521,7 +531,7 @@ func (rc *RouteCollection) setPrefix(prefix string) *RouteCollection {
 	return rc
 }
 
-// Freeze freezes a route collection
+// Flush freezes a route collection
 func (rc *RouteCollection) Flush() {
 
 	if rc.IsFrozen() == true {
@@ -753,6 +763,85 @@ func (i Injector) Parent() *Injector {
 }
 
 /**********************************/
+/*         EVENT EMITTER          */
+/**********************************/
+
+// Listener is an event handler function
+type Listener *func(string, ...interface{}) bool
+
+// EventEmitter listens for and emits events
+type EventEmitter struct {
+	handlers map[string][]Listener
+}
+
+// NewEventEmitter returns a new event emitter
+func NewEventEmitter() *EventEmitter {
+	return &EventEmitter{
+		handlers: map[string][]Listener{},
+	}
+}
+
+// Emit emits an event
+func (em *EventEmitter) Emit(event string, arguments ...interface{}) {
+	if len(em.handlers) > 0 && em.handlers[event] != nil {
+		for _, handler := range em.handlers[event] {
+			Continue := (*handler)(event, arguments...)
+			if !Continue {
+				break
+			}
+		}
+	}
+}
+
+// AddListener adds a new listener function pointer
+func (em *EventEmitter) AddListener(event string, listener Listener) {
+	if em.handlers[event] != nil {
+		em.handlers[event] = []Listener{}
+	}
+	em.handlers[event] = append(em.handlers[event], listener)
+}
+
+// RemoveListener removes a listener function pointer
+func (em *EventEmitter) RemoveListener(event string, listener Listener) bool {
+	var found bool
+	if em.handlers[event] != nil {
+		for i, handler := range em.handlers[event] {
+			if handler == listener {
+
+				head := em.handlers[event][0:i]
+				if length := len(em.handlers); i == length-1 {
+					em.handlers[event] = head
+				} else {
+					tail := em.handlers[event][i+1 : length-1]
+					em.handlers[event] = append(head, tail...)
+				}
+
+				found = true
+				break
+			}
+		}
+	}
+	return found
+}
+
+// RemoveAllListeners remove all listeners given an event and returns the listener slice
+func (em *EventEmitter) RemoveAllListeners(event string) []Listener {
+	listeners := []Listener{}
+	if em.handlers[event] != nil {
+		listeners, em.handlers[event] = em.handlers[event], listeners
+	}
+	return listeners
+}
+
+// HasListener returns true if an event has listeners
+func (em *EventEmitter) HasListener(event string) bool {
+	if em.handlers[event] != nil && len(em.handlers[event]) > 0 {
+		return true
+	}
+	return false
+}
+
+/**********************************/
 /*              UTILS             */
 /**********************************/
 
@@ -781,6 +870,7 @@ func Must(err error) {
 	}
 }
 
+// MustWithResult returns a result or panics on error
 func MustWithResult(result interface{}, err error) interface{} {
 	if err != nil {
 		panic(err)
@@ -805,16 +895,19 @@ func (r *ResponseWriterWithCode) WriteHeader(code int) {
 	r.ResponseWriter.WriteHeader(code)
 }
 
+// Write writes to the response
 func (r *ResponseWriterWithCode) Write(b []byte) (int, error) {
 	i, err := r.ResponseWriter.Write(b)
 	r.writtenLength = r.writtenLength + len(b)
 	return i, err
 }
 
+// Code returns the response status code
 func (r *ResponseWriterWithCode) Code() int {
 	return r.code
 }
 
+// Length returns the number of bytes written in the response
 func (r *ResponseWriterWithCode) Length() int {
 	return r.writtenLength
 }

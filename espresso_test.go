@@ -334,6 +334,32 @@ func TestExpressoError401(t *testing.T) {
 }
 
 /**********************************/
+/*      EVENT EMITTER TESTS       */
+/**********************************/
+func TestEventEmitter(t *testing.T) {
+	var called int
+	e := expect.New(t)
+	em := expresso.NewEventEmitter()
+	listener := func(event string, arguments ...interface{}) bool {
+		called = called + 1
+		return true
+	}
+	em.AddListener("event", &listener)
+	em.Emit("event")
+	e.Expect(called).ToBe(1)
+	em.RemoveListener("event", &listener)
+	em.Emit("event")
+	e.Expect(called).ToBe(1)
+	em.AddListener("event", &listener)
+	em.RemoveAllListeners("event")
+	em.Emit("event")
+	e.Expect(called).ToEqual(1)
+	e.Expect(em.HasListener("event")).ToBeFalse()
+	em.AddListener("event", &listener)
+	e.Expect(em.HasListener("event")).ToBeTrue()
+}
+
+/**********************************/
 /*     ROUTE COLLECTION TESTS     */
 /**********************************/
 
