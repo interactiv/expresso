@@ -46,7 +46,7 @@ func main() {
 	   is fully compatible with the default http.HandlerFunc type.
 	*/
 	app.Get("/greet/:name?", func(ctx *expresso.Context, rw http.ResponseWriter) {
-		rw.Write([]byte("Hello " + ctx.RequestVars["name"].(string)))
+		rw.Write([]byte("Hello " + ctx.RequestVars["name"]))
 	}).
 		// Assert the name variable is made of alpha characters
 		Assert("name", "[A-Z a-z]+")
@@ -77,7 +77,7 @@ func main() {
 	// variable is passed as a string
 	adminRoutes.All("/:user", func(ctx *expresso.Context) {
 		// sends a JSON response to the client
-		ctx.WriteJSON(ctx.RequestVars["user"].(*User))
+		ctx.WriteJSON(ctx.ConvertedRequestVars["user"].(*User))
 	}).Convert("user", func(user string, users Users) *User {
 		return users.GetById(user)
 	}).Assert("user", "\\d+")
