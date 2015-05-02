@@ -54,7 +54,7 @@
 //    	   handler's arguments are automatically injected, so the framework
 //    	   is fully compatible with the default http.HandlerFunc type.
 //    	*/
-//    	app.Get("/greet/:name?", func(ctx *expresso.Context, rw http.ResponseWriter) {
+//    	app.Get("/greet/:name", func(ctx *expresso.Context, rw http.ResponseWriter) {
 //    		rw.Write([]byte("Hello " + ctx.RequestVars["name"].(string)))
 //    	}).
 //    		// Assert the name variable is made of alpha characters

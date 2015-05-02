@@ -189,7 +189,7 @@ func TestConvert(t *testing.T) {
 	app := expresso.New()
 	app.Get("/person/:person", func(ctx *expresso.Context, rw http.ResponseWriter) {
 		var person *Person
-		person = ctx.RequestVars["person"].(*Person)
+		person = ctx.ConvertedRequestVars["person"].(*Person)
 		fmt.Fprintf(rw, "%s", person.name)
 		e.Expect(person).Not().ToBeNil()
 	}).Convert("person", func(person string, r *http.Request) *Person {

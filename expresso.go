@@ -68,13 +68,15 @@ func (e *Expresso) ServeHTTP(responseWriter http.ResponseWriter, request *http.R
 		matches                []*Route
 		next                   Next
 		context                *Context
-		injector               *Injector
+		requestInjector        *Injector
 		responseWriterWithCode *ResponseWriterWithCode
 	)
 	defer func() {
 		if err := recover(); err != nil {
-			injector.Register(err)
-			injector.MustApply(e.errorHandlers[500])
+			responseWriter.WriteHeader(http.StatusInternalServerError)
+			log.Println(err)
+			debug.PrintStack()
+			requestInjector.MustApply(e.errorHandlers[500])
 		}
 	}()
 	// wrap responseWriter so we can access the status code
@@ -82,10 +84,10 @@ func (e *Expresso) ServeHTTP(responseWriter http.ResponseWriter, request *http.R
 		ResponseWriter: responseWriter,
 	}
 	// sets context and injector
-	context = NewContext(responseWriter, request)
-	injector = NewInjector(request, responseWriterWithCode, context)
-	injector.Register(injector)
-	injector.SetParent(e.Injector())
+	context = NewContext(responseWriterWithCode, request)
+	requestInjector = NewInjector(request, responseWriterWithCode, context)
+	requestInjector.Register(requestInjector)
+	requestInjector.SetParent(e.Injector())
 	if e.errorHandlers[500] == nil {
 		e.Error(500, InternalServerErrorHandler)
 	}
@@ -107,16 +109,11 @@ func (e *Expresso) ServeHTTP(responseWriter http.ResponseWriter, request *http.R
 	// if there are still some matched routes and the last handler of the previous route calls next
 	// then repeat the process for the next matched route
 	next = func() {
-		if code := responseWriterWithCode.Code; code > 399 {
-			if e.errorHandlers[code] != nil {
-				injector.MustApply(e.errorHandlers[code])
-			} else {
-				http.Error(responseWriterWithCode, http.StatusText(code), code)
-			}
+		if e.hasErrorCode(responseWriterWithCode, requestInjector) {
 			return
 		}
 		if len(matches) == 0 {
-			injector.MustApply(e.errorHandlers[404])
+			requestInjector.MustApply(e.errorHandlers[404])
 			return
 		}
 		match := matches[0]
@@ -129,16 +126,25 @@ func (e *Expresso) ServeHTTP(responseWriter http.ResponseWriter, request *http.R
 		for key, value := range context.RequestVars {
 			if match.converters[key] != nil {
 				converterInjector := NewInjector(value)
-				converterInjector.SetParent(injector)
+				converterInjector.SetParent(requestInjector)
 				res := converterInjector.MustApply(match.converters[key])
+				if e.hasErrorCode(responseWriterWithCode, requestInjector) {
+					return
+				}
 				if len(res) > 0 {
-					context.RequestVars[key] = res[0]
+					// if only 1 value is returned , assign the value
+					if len(res) == 1 {
+						context.ConvertedRequestVars[key] = res[0]
+						// if multiple values are returned , assign the array of values
+					} else {
+						context.ConvertedRequestVars[key] = res
+					}
 				}
 			}
 		}
-		injector.Register(next)
+		requestInjector.Register(next)
 		context.next = next
-		injector.MustApply(match.Handler())
+		requestInjector.MustApply(match.Handler())
 	}
 	next()
 
@@ -158,6 +164,19 @@ func (e *Expresso) Error(errorCode int, handlerFunc HandlerFunction) {
 	e.errorHandlers[errorCode] = handlerFunc
 }
 
+// hasErrorCode Return true if a http status greater than 399 has been set
+func (e *Expresso) hasErrorCode(rw *ResponseWriterWithCode, injector *Injector) bool {
+	if code := rw.Code(); code > 399 {
+		if e.errorHandlers[code] != nil && rw.Length() == 0 {
+			injector.MustApply(e.errorHandlers[code])
+		} else {
+			http.Error(rw, http.StatusText(code), code)
+		}
+		return true
+	}
+	return false
+}
+
 // Injector return the injector
 func (e *Expresso) Injector() *Injector {
 	return e.injector
@@ -168,8 +187,8 @@ func (e *Expresso) Injector() *Injector {
 /**********************************/
 
 // InternalServerErrorHandler executes the default 500 handler
-func InternalServerErrorHandler(err error, rw http.ResponseWriter) {
-	http.Error(rw, fmt.Sprintf("%v\r\n%s", err, debug.Stack()), http.StatusInternalServerError)
+func InternalServerErrorHandler(rw http.ResponseWriter) {
+	rw.Write([]byte(http.StatusText(http.StatusInternalServerError)))
 }
 
 // NotFoundErrorHandler executes the default 404 handler
@@ -186,7 +205,8 @@ type Context struct {
 	Request  *http.Request
 	Response http.ResponseWriter
 	// RequestVars are variables extracted from the request
-	RequestVars map[string]interface{}
+	RequestVars          map[string]string
+	ConvertedRequestVars map[string]interface{}
 	//  Vars is a map to store any data during the request response cycle
 	Vars map[string]interface{}
 	next Next
@@ -195,12 +215,16 @@ type Context struct {
 // NewContext returns a new Context
 func NewContext(response http.ResponseWriter, request *http.Request) *Context {
 	ctx := &Context{
-		RequestVars: map[string]interface{}{},
-		Vars:        map[string]interface{}{},
-		Request:     request,
-		Response:    response,
+		RequestVars:          map[string]string{},
+		ConvertedRequestVars: map[string]interface{}{},
+		Vars:                 map[string]interface{}{},
+		Request:              request,
+		Response:             response,
 	}
 	return ctx
+}
+func (ctx *Context) Status(status int) {
+	ctx.Response.WriteHeader(status)
 }
 func (ctx *Context) Next() {
 	ctx.next()
@@ -266,6 +290,7 @@ type Route struct {
 	frozen      bool
 	converters  map[string]interface{}
 	assertions  map[string]string
+	attributes  map[string]interface{}
 	// name is the route's name
 	name string
 	// wether the route is intended to be a middlware or not
@@ -279,6 +304,7 @@ func NewRoute(path string) *Route {
 		params:      []string{},
 		converters:  map[string]interface{}{},
 		assertions:  map[string]string{},
+		attributes:  map[string]interface{}{},
 		path:        path,
 		handlerFunc: []HandlerFunction{},
 	}
@@ -362,7 +388,7 @@ func (r *Route) Freeze() *Route {
 			if r.assertions[params[0]] != "" {
 				// optional ?
 				if strings.HasSuffix(match, "?") {
-					return r.assertions[params[0]] + "?"
+					return "?" + r.assertions[params[0]] + "?"
 				}
 				return r.assertions[params[0]]
 			}
@@ -373,7 +399,7 @@ func (r *Route) Freeze() *Route {
 		}
 		//if match ends with ? , match is optional
 		if strings.HasSuffix(match, "?") {
-			return DefaultParamPattern + "?"
+			return "?" + DefaultParamPattern + "?"
 		}
 		return DefaultParamPattern
 	})
@@ -445,6 +471,17 @@ func (r *Route) Assert(parameterName string, pattern string) *Route {
 	regexp.MustCompile("(" + pattern + ")")
 	r.assertions[parameterName] = "(" + pattern + ")"
 	return r
+}
+
+// SetAttribute sets a route attribute
+func (r *Route) SetAttribute(attr string, value interface{}) *Route {
+	r.attributes[attr] = value
+	return r
+}
+
+// Attribute returns a route attribute
+func (r *Route) Attribute(attr string) interface{} {
+	return r.attributes[attr]
 }
 
 /**********************************/
@@ -754,13 +791,28 @@ func MustWithResult(result interface{}, err error) interface{} {
 // ResponseWriterWithCode exposes the status of a response.
 type ResponseWriterWithCode struct {
 	http.ResponseWriter
-	Code int
+	code          int
+	writtenLength int
 }
 
 // WriteHeader sends an HTTP response header with status code.
 func (r *ResponseWriterWithCode) WriteHeader(code int) {
-	r.Code = code
+	r.code = code
 	r.ResponseWriter.WriteHeader(code)
+}
+
+func (r *ResponseWriterWithCode) Write(b []byte) (int, error) {
+	i, err := r.ResponseWriter.Write(b)
+	r.writtenLength = r.writtenLength + len(b)
+	return i, err
+}
+
+func (r *ResponseWriterWithCode) Code() int {
+	return r.code
+}
+
+func (r *ResponseWriterWithCode) Length() int {
+	return r.writtenLength
 }
 
 // Next represents a function
