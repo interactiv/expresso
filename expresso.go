@@ -371,7 +371,7 @@ func (r Route) MethodMatch(method string) bool {
 }
 
 // Freeze freezes a route , which will make it read only
-func (r *Route) Freeze() *Route {
+func (r *Route) freeze() *Route {
 	if r.IsFrozen() {
 		return r
 	}
@@ -541,7 +541,7 @@ func (rc *RouteCollection) Flush() {
 
 	for _, route := range rc.Routes {
 		route.path = rc.prefix + route.path
-		route.Freeze()
+		route.freeze()
 	}
 
 	if len(rc.Children) > 0 {

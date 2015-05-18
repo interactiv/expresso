@@ -254,15 +254,9 @@ func TestInjector(t *testing.T) {
 }
 
 func TestBind(t *testing.T) {
-	r := expresso.NewRoute("/library/books")
-	r.SetMethods([]string{"GET", "POST"})
-	r.Freeze()
-	expect.Expect(r.Name(), t).ToBe("_library_books__GET_POST_")
-	r = expresso.NewRoute("/post/new")
+	r := expresso.NewRoute("/post/new")
 	r.SetName("new_post")
-	r.Freeze()
 	expect.Expect(r.Name(), t).ToBe("new_post")
-
 }
 
 func TestError(t *testing.T) {
