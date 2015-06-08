@@ -327,6 +327,26 @@ func TestExpressoError401(t *testing.T) {
 	e.Expect(body).ToEqual(notAuthorizedMessage)
 }
 
+// TestPrefix makes sure that given a mounted route at /
+// if a subroute is /example , then the subroute is accessible at /example and //example
+func TestPrefix(t *testing.T) {
+	const message = "example"
+	e := expect.New(t)
+	app := expresso.New()
+	routeCollection := expresso.NewRouteCollection()
+	routeCollection.All("/"+message, func(rw http.ResponseWriter) {
+		rw.Write([]byte(message))
+	})
+	app.Mount("/", routeCollection)
+	server := httptest.NewServer(app)
+	defer server.Close()
+	response := expresso.MustWithResult(http.Get(server.URL + "/" + message)).(*http.Response)
+	defer response.Body.Close()
+	e.Expect(response.StatusCode).ToEqual(200)
+	body := string(expresso.MustWithResult(ioutil.ReadAll(response.Body)).([]byte))
+	e.Expect(body).ToEqual(message)
+}
+
 /**********************************/
 /*      EVENT EMITTER TESTS       */
 /**********************************/

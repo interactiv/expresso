@@ -525,9 +525,15 @@ func (rc *RouteCollection) mustNotBeFrozen() {
 
 func (rc *RouteCollection) setPrefix(prefix string) *RouteCollection {
 	rc.mustNotBeFrozen()
-	if prefix != "" && prefix[0] != '/' {
-		prefix = "/" + prefix
+	if prefix != "" {
+		if prefix[0] != '/' {
+			prefix = "/" + prefix
+		}
+		if strings.HasSuffix(prefix, "/") {
+			prefix = prefix + "?"
+		}
 	}
+
 	rc.prefix = prefix
 	return rc
 }
