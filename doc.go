@@ -1,7 +1,7 @@
 // Copyrights 2015 mparaiso <mparaiso@online.fr>
 // License MIT
 
-// Expresso
+// Monorail
 //
 // version 0.4
 //
@@ -17,7 +17,7 @@
 //    	"net/http"
 //    	"time"
 //
-//    	"github.com/interactiv/expresso"
+//    	"github.com/interactiv/monorail"
 //    )
 //
 //    //somewhere in the file the following types are declared :
@@ -39,11 +39,11 @@
 //
 //    func main() {
 //    	var users Users
-//    	/* creates a new expresso app*/
-//    	app := expresso.New()
+//    	/* creates a new monorail app*/
+//    	app := monorail.New()
 //
 //    	/* creates a middleware that will be called with each request*/
-//    	app.Use("/", func(next expresso.Next) {
+//    	app.Use("/", func(next monorail.Next) {
 //    		t0 := time.Now()
 //    		next()
 //    		t1 := time.Now()
@@ -54,7 +54,7 @@
 //    	   handler's arguments are automatically injected, so the framework
 //    	   is fully compatible with the default http.HandlerFunc type.
 //    	*/
-//    	app.Get("/greet/:name", func(ctx *expresso.Context, rw http.ResponseWriter) {
+//    	app.Get("/greet/:name", func(ctx *monorail.Context, rw http.ResponseWriter) {
 //    		rw.Write([]byte("Hello " + ctx.RequestVars["name"].(string)))
 //    	}).
 //    		// Assert the name variable is made of alpha characters
@@ -62,9 +62,9 @@
 //    	/*
 //    	   create a new route collection
 //    	*/
-//    	adminRoutes := expresso.NewRouteCollection()
+//    	adminRoutes := monorail.NewRouteCollection()
 //
-//    	adminRoutes.Use("/", func(rw http.ResponseWriter, r *http.Request, next expresso.Next) {
+//    	adminRoutes.Use("/", func(rw http.ResponseWriter, r *http.Request, next monorail.Next) {
 //    		if r.URL.Query().Get("password") != "secret" {
 //    			http.Redirect(rw, r, "/", http.StatusForbidden)
 //    			return
@@ -84,7 +84,7 @@
 //    	// directly in a request handler,arguments are injected
 //    	// with the help of the Injector, the user request
 //    	// variable is passed as a string
-//    	adminRoutes.All("/:user", func(ctx *expresso.Context) {
+//    	adminRoutes.All("/:user", func(ctx *monorail.Context) {
 //    		// sends a JSON response to the client
 //    		ctx.WriteJSON(ctx.RequestVars["user"].(*User))
 //    	}).Convert("user", func(user string, users Users) *User {
@@ -99,4 +99,4 @@
 //
 //    }
 //
-package expresso
+package monorail

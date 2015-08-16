@@ -2,7 +2,7 @@
 // License MIT
 // version 0.4
 
-package expresso
+package monorail
 
 import (
 	"encoding/json"
@@ -27,8 +27,8 @@ var (
 /*               APP              */
 /**********************************/
 
-// Expresso represents an expresso application
-type Expresso struct {
+// Monorail represents an monorail application
+type Monorail struct {
 	debug bool
 	*RouteCollection
 	*EventEmitter
@@ -38,20 +38,20 @@ type Expresso struct {
 	errorHandlers  map[int]HandlerFunction
 }
 
-// New creates an expresso application
-func New() *Expresso {
-	expresso := &Expresso{
+// New creates an monorail application
+func New() *Monorail {
+	monorail := &Monorail{
 		RouteCollection: NewRouteCollection(),
 		EventEmitter:    NewEventEmitter(),
 		injector:        NewInjector(),
 		errorHandlers:   map[int]HandlerFunction{},
 	}
-	expresso.injector.Register(expresso)
-	return expresso
+	monorail.injector.Register(monorail)
+	return monorail
 }
 
 // Boot boots the application
-func (e *Expresso) Boot() {
+func (e *Monorail) Boot() {
 	if !e.Booted() {
 		e.RouteCollection.Flush()
 		e.booted = true
@@ -59,14 +59,14 @@ func (e *Expresso) Boot() {
 }
 
 // Booted returns true if the Boot function has been called
-func (e Expresso) Booted() bool {
+func (e Monorail) Booted() bool {
 	return e.booted
 }
 
-// ServeHTTP boots expresso server and handles http requests.
+// ServeHTTP boots monorail server and handles http requests.
 //
 // Can Panic!
-func (e *Expresso) ServeHTTP(responseWriter http.ResponseWriter, request *http.Request) {
+func (e *Monorail) ServeHTTP(responseWriter http.ResponseWriter, request *http.Request) {
 	var (
 		matches                []*Route
 		next                   Next
@@ -107,7 +107,7 @@ func (e *Expresso) ServeHTTP(responseWriter http.ResponseWriter, request *http.R
 	matches = e.RequestMatcher.MatchAll(request)
 
 	// For the first matched route, call all its handlers
-	// if an handler in a route calls expresso.Next next() , execute the next handler
+	// if an handler in a route calls monorail.Next next() , execute the next handler
 	// When all handlers of a route have been called
 	// if there are still some matched routes and the last handler of the previous route calls next
 	// then repeat the process for the next matched route
@@ -154,10 +154,10 @@ func (e *Expresso) ServeHTTP(responseWriter http.ResponseWriter, request *http.R
 }
 
 // Error sets an error handler given an error code.
-// Arguments of that handler function are resolved by expresso's injector.
+// Arguments of that handler function are resolved by monorail's injector.
 //
 // Can Panic! if the error code is lower than 400.
-func (e *Expresso) Error(errorCode int, handlerFunc HandlerFunction) {
+func (e *Monorail) Error(errorCode int, handlerFunc HandlerFunction) {
 	if e.Booted() {
 		return
 	}
@@ -168,7 +168,7 @@ func (e *Expresso) Error(errorCode int, handlerFunc HandlerFunction) {
 }
 
 // hasErrorCode Return true if a http status greater than 399 has been set
-func (e *Expresso) hasErrorCode(rw *ResponseWriterWithCode, injector *Injector) bool {
+func (e *Monorail) hasErrorCode(rw *ResponseWriterWithCode, injector *Injector) bool {
 	if code := rw.Code(); code > 399 {
 		if e.errorHandlers[code] != nil && rw.Length() == 0 {
 			injector.MustApply(e.errorHandlers[code])
@@ -181,7 +181,7 @@ func (e *Expresso) hasErrorCode(rw *ResponseWriterWithCode, injector *Injector) 
 }
 
 // Injector return the injector
-func (e *Expresso) Injector() *Injector {
+func (e *Monorail) Injector() *Injector {
 	return e.injector
 }
 
@@ -203,7 +203,7 @@ func NotFoundErrorHandler(rw http.ResponseWriter, r *http.Request) {
 /*            CONTEXT             */
 /**********************************/
 
-// Context represents a request context in an expresso application
+// Context represents a request context in an monorail application
 type Context struct {
 	Request  *http.Request
 	Response http.ResponseWriter
