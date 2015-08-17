@@ -1,14 +1,28 @@
-// Copyright 2015 <mparaiso@online.fr>
-// License MIT
+//    Monorail version 0.4
+//    Monorail is a web framework for the Go language
+//    Copyright (C) 2015  mparaiso <mparaiso@online.fr>
+//
+//    This program is free software: you can redistribute it and/or modify
+//    it under the terms of the GNU General Public License as published by
+//    the Free Software Foundation, either version 3 of the License, or
+//    (at your option) any later version.
 
-package expresso
+//    This program is distributed in the hope that it will be useful,
+//    but WITHOUT ANY WARRANTY; without even the implied warranty of
+//    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+//    GNU General Public License for more details.
+
+//    You should have received a copy of the GNU General Public License
+//    along with this program.  If not, see <http://www.gnu.org/licenses/>
+
+package monorail
 
 import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"log"
 	"net/http"
-	"os"
 	"reflect"
 	"regexp"
 	"runtime/debug"
@@ -17,7 +31,7 @@ import (
 
 var (
 	// Pattern represents a route param regexp pattern
-	Pattern = "(?:\\:)(\\w+)|(\\(.+\\)?)"
+	Pattern = "(?:\\:)(\\w+)(\\?)?|(\\(.+\\)?)"
 	// DefaultParamPattern represents the default pattern that a route param matches
 	DefaultParamPattern = "(\\w+)"
 )
@@ -26,58 +40,59 @@ var (
 /*               APP              */
 /**********************************/
 
-// Expresso represents an expresso application
-type Expresso struct {
+// Monorail represents an monorail application
+type Monorail struct {
 	debug bool
 	*RouteCollection
+	*EventEmitter
 	RequestMatcher *RequestMatcher
 	booted         bool
 	injector       *Injector
 	errorHandlers  map[int]HandlerFunction
 }
 
-// New creates an expresso application
-func New() *Expresso {
-	expresso := &Expresso{
-		RouteCollection: &RouteCollection{Routes: []*Route{}},
+// New creates an monorail application
+func New() *Monorail {
+	monorail := &Monorail{
+		RouteCollection: NewRouteCollection(),
+		EventEmitter:    NewEventEmitter(),
 		injector:        NewInjector(),
 		errorHandlers:   map[int]HandlerFunction{},
 	}
-	expresso.injector.Register(expresso)
-	return expresso
+	monorail.injector.Register(monorail)
+	return monorail
 }
 
 // Boot boots the application
-func (e *Expresso) Boot() {
+func (e *Monorail) Boot() {
 	if !e.Booted() {
-		e.RouteCollection.Freeze()
+		e.RouteCollection.Flush()
 		e.booted = true
 	}
 }
 
 // Booted returns true if the Boot function has been called
-func (e Expresso) Booted() bool {
+func (e Monorail) Booted() bool {
 	return e.booted
 }
 
-// ServeHTTP boots expresso server and handles http requests.
+// ServeHTTP boots monorail server and handles http requests.
 //
 // Can Panic!
-func (e *Expresso) ServeHTTP(responseWriter http.ResponseWriter, request *http.Request) {
+func (e *Monorail) ServeHTTP(responseWriter http.ResponseWriter, request *http.Request) {
 	var (
 		matches                []*Route
-		next                   func()
+		next                   Next
 		context                *Context
-		injector               *Injector
+		requestInjector        *Injector
 		responseWriterWithCode *ResponseWriterWithCode
-		stack                  *StackWithInjector
 	)
 	defer func() {
 		if err := recover(); err != nil {
-			//log.Println(err)
-			os.Stderr.WriteString(fmt.Sprint(err))
-			injector.Register(err)
-			injector.MustApply(e.errorHandlers[500])
+			responseWriter.WriteHeader(http.StatusInternalServerError)
+			log.Println(err)
+			debug.PrintStack()
+			requestInjector.MustApply(e.errorHandlers[500])
 		}
 	}()
 	// wrap responseWriter so we can access the status code
@@ -85,10 +100,10 @@ func (e *Expresso) ServeHTTP(responseWriter http.ResponseWriter, request *http.R
 		ResponseWriter: responseWriter,
 	}
 	// sets context and injector
-	context = NewContext(responseWriter, request)
-	injector = NewInjector(request, responseWriterWithCode, context)
-	injector.Register(injector)
-	injector.SetParent(e.Injector())
+	context = NewContext(responseWriterWithCode, request)
+	requestInjector = NewInjector(request, responseWriterWithCode, context, e.EventEmitter)
+	requestInjector.Register(requestInjector)
+	requestInjector.SetParent(e.Injector())
 	if e.errorHandlers[500] == nil {
 		e.Error(500, InternalServerErrorHandler)
 	}
@@ -103,18 +118,18 @@ func (e *Expresso) ServeHTTP(responseWriter http.ResponseWriter, request *http.R
 	}
 	// find all routes matching the request in the route collection
 	matches = e.RequestMatcher.MatchAll(request)
-	// no match, call 404
-	if len(matches) == 0 {
-		injector.MustApply(e.errorHandlers[404])
-		return
-	}
+
 	// For the first matched route, call all its handlers
-	// if an handler in a route calls expresso.Next next() , execute the next handler
+	// if an handler in a route calls monorail.Next next() , execute the next handler
 	// When all handlers of a route have been called
 	// if there are still some matched routes and the last handler of the previous route calls next
 	// then repeat the process for the next matched route
 	next = func() {
+		if e.hasErrorCode(responseWriterWithCode, requestInjector) {
+			return
+		}
 		if len(matches) == 0 {
+			requestInjector.MustApply(e.errorHandlers[404])
 			return
 		}
 		match := matches[0]
@@ -127,31 +142,35 @@ func (e *Expresso) ServeHTTP(responseWriter http.ResponseWriter, request *http.R
 		for key, value := range context.RequestVars {
 			if match.converters[key] != nil {
 				converterInjector := NewInjector(value)
-				converterInjector.SetParent(injector)
+				converterInjector.SetParent(requestInjector)
 				res := converterInjector.MustApply(match.converters[key])
+				if e.hasErrorCode(responseWriterWithCode, requestInjector) {
+					return
+				}
 				if len(res) > 0 {
-					context.RequestVars[key] = res[0]
+					// if only 1 value is returned , assign the value
+					if len(res) == 1 {
+						context.ConvertedRequestVars[key] = res[0]
+						// if multiple values are returned , assign the array of values
+					} else {
+						context.ConvertedRequestVars[key] = res
+					}
 				}
 			}
 		}
-		stack = NewStackWithInjector(injector, match.Handlers()...)
-		stack.SetNext(next)
-		stack.ServeHTTP(responseWriterWithCode, request)
+		requestInjector.Register(next)
+		context.next = next
+		requestInjector.MustApply(match.Handler())
 	}
 	next()
-	//try to get status code from response,if error, try to execute
-	// error handler
-	code := responseWriterWithCode.Code
-	if code > 399 && e.errorHandlers[code] != nil {
-		injector.MustApply(e.errorHandlers[code])
-	}
+
 }
 
 // Error sets an error handler given an error code.
-// Arguments of that handler function are resolved by expresso's injector.
+// Arguments of that handler function are resolved by monorail's injector.
 //
 // Can Panic! if the error code is lower than 400.
-func (e *Expresso) Error(errorCode int, handlerFunc HandlerFunction) {
+func (e *Monorail) Error(errorCode int, handlerFunc HandlerFunction) {
 	if e.Booted() {
 		return
 	}
@@ -161,8 +180,21 @@ func (e *Expresso) Error(errorCode int, handlerFunc HandlerFunction) {
 	e.errorHandlers[errorCode] = handlerFunc
 }
 
+// hasErrorCode Return true if a http status greater than 399 has been set
+func (e *Monorail) hasErrorCode(rw *ResponseWriterWithCode, injector *Injector) bool {
+	if code := rw.Code(); code > 399 {
+		if e.errorHandlers[code] != nil && rw.Length() == 0 {
+			injector.MustApply(e.errorHandlers[code])
+		} else {
+			http.Error(rw, http.StatusText(code), code)
+		}
+		return true
+	}
+	return false
+}
+
 // Injector return the injector
-func (e *Expresso) Injector() *Injector {
+func (e *Monorail) Injector() *Injector {
 	return e.injector
 }
 
@@ -171,8 +203,8 @@ func (e *Expresso) Injector() *Injector {
 /**********************************/
 
 // InternalServerErrorHandler executes the default 500 handler
-func InternalServerErrorHandler(err error, rw http.ResponseWriter) {
-	http.Error(rw, fmt.Sprintf("%v\r\n%s", err, debug.Stack()), http.StatusInternalServerError)
+func InternalServerErrorHandler(rw http.ResponseWriter) {
+	rw.Write([]byte(http.StatusText(http.StatusInternalServerError)))
 }
 
 // NotFoundErrorHandler executes the default 404 handler
@@ -184,25 +216,40 @@ func NotFoundErrorHandler(rw http.ResponseWriter, r *http.Request) {
 /*            CONTEXT             */
 /**********************************/
 
-// Context represents a request context in an expresso application
+// Context represents a request context in an monorail application
 type Context struct {
 	Request  *http.Request
 	Response http.ResponseWriter
 	// RequestVars are variables extracted from the request
-	RequestVars map[string]interface{}
+	RequestVars          map[string]string
+	ConvertedRequestVars map[string]interface{}
 	//  Vars is a map to store any data during the request response cycle
 	Vars map[string]interface{}
+	next Next
 }
 
 // NewContext returns a new Context
 func NewContext(response http.ResponseWriter, request *http.Request) *Context {
 	ctx := &Context{
-		RequestVars: map[string]interface{}{},
-		Vars:        map[string]interface{}{},
-		Request:     request,
-		Response:    response,
+		RequestVars:          map[string]string{},
+		ConvertedRequestVars: map[string]interface{}{},
+		Vars:                 map[string]interface{}{},
+		Request:              request,
+		Response:             response,
 	}
 	return ctx
+}
+
+// SetStatus sets the the status code
+func (ctx *Context) SetStatus(status int) {
+
+	ctx.Response.WriteHeader(status)
+
+}
+
+// Next calls the next middleware in the middleware chain
+func (ctx *Context) Next() {
+	ctx.next()
 }
 
 // Redirect redirects request
@@ -260,11 +307,12 @@ type Route struct {
 	pattern *regexp.Regexp
 	// path is the path as string
 	path        string
-	handlerFunc []HandlerFunction
+	handlerFunc HandlerFunction
 	params      []string
 	frozen      bool
 	converters  map[string]interface{}
 	assertions  map[string]string
+	attributes  map[string]interface{}
 	// name is the route's name
 	name string
 	// wether the route is intended to be a middlware or not
@@ -278,6 +326,7 @@ func NewRoute(path string) *Route {
 		params:      []string{},
 		converters:  map[string]interface{}{},
 		assertions:  map[string]string{},
+		attributes:  map[string]interface{}{},
 		path:        path,
 		handlerFunc: []HandlerFunction{},
 	}
@@ -303,24 +352,22 @@ func (r *Route) Name() string {
 // it will return []string{"category","productId"}
 func (r *Route) Params() []string { return r.params }
 
-// Handlers returns the current route handler function
-func (r *Route) Handlers() []HandlerFunction {
+// Handler returns the current route handler function
+func (r *Route) Handler() HandlerFunction {
 	return r.handlerFunc
 }
 
 // HandlerFunction represent a route handler
 type HandlerFunction interface{}
 
-// SetHandlers sets the route handler function.
+// SetHandler sets the route handler function.
 //
 // Can Panic!
-func (r *Route) SetHandlers(handlerFunc ...HandlerFunction) {
+func (r *Route) SetHandler(handlerFunc HandlerFunction) {
 	if r.IsFrozen() {
 		return
 	}
-	for _, function := range handlerFunc {
-		MustBeCallable(function)
-	}
+	MustBeCallable(handlerFunc)
 	r.handlerFunc = handlerFunc
 }
 
@@ -337,7 +384,7 @@ func (r Route) MethodMatch(method string) bool {
 }
 
 // Freeze freezes a route , which will make it read only
-func (r *Route) Freeze() *Route {
+func (r *Route) freeze() *Route {
 	if r.IsFrozen() {
 		return r
 	}
@@ -357,10 +404,14 @@ func (r *Route) Freeze() *Route {
 	}
 	// replace route variables either with the default variable pattern or an assertion corresponding to the route variable
 	stringPattern := routeVarsRegexp.ReplaceAllStringFunc(r.path, func(match string) string {
-		// if an assertion is found, replace with the assertion
+		// if an assertion is found, replace with the assertion pattern
 		params := regexp.MustCompile("\\w+").FindAllString(match, -1)
 		if len(params) > 0 {
 			if r.assertions[params[0]] != "" {
+				// optional ?
+				if strings.HasSuffix(match, "?") {
+					return "?" + r.assertions[params[0]] + "?"
+				}
 				return r.assertions[params[0]]
 			}
 		}
@@ -368,10 +419,18 @@ func (r *Route) Freeze() *Route {
 		if match[0] == '(' && match[len(match)-1] == ')' {
 			return match
 		}
+		//if match ends with ? , match is optional
+		if strings.HasSuffix(match, "?") {
+			return "?" + DefaultParamPattern + "?"
+		}
 		return DefaultParamPattern
 	})
 	// add ^ and $ and optional /? to string pattern
-	stringPattern = "^" + stringPattern + "/?"
+	if strings.HasSuffix(stringPattern, "/") {
+		stringPattern = "^" + stringPattern + "?"
+	} else {
+		stringPattern = "^" + stringPattern + "/?"
+	}
 	if !r.passthrough {
 		stringPattern = stringPattern + "$"
 	}
@@ -436,31 +495,85 @@ func (r *Route) Assert(parameterName string, pattern string) *Route {
 	return r
 }
 
+// SetAttribute sets a route attribute
+func (r *Route) SetAttribute(attr string, value interface{}) *Route {
+	r.attributes[attr] = value
+	return r
+}
+
+// Attribute returns a route attribute
+func (r *Route) Attribute(attr string) interface{} {
+	return r.attributes[attr]
+}
+
 /**********************************/
 /*   ROUTE COLLECTION             */
 /**********************************/
 
 // RouteCollection is a collection of routes
 type RouteCollection struct {
-	Routes   []*Route
-	prefix   string
-	frozen   bool
-	Children []*RouteCollection
+	Routes    []*Route
+	prefix    string
+	frozen    bool
+	Children  []*RouteCollection
+	hasParent bool
+}
+
+// NewRouteCollection creates a new RouteCollection
+func NewRouteCollection() *RouteCollection {
+	return &RouteCollection{Routes: []*Route{}, Children: []*RouteCollection{}}
+}
+
+// AddRoute adds a route to the route collection
+func (rc *RouteCollection) AddRoute(r *Route) *RouteCollection {
+	rc.Routes = append(rc.Routes, r)
+	return rc
+}
+
+func (rc *RouteCollection) mustNotBeFrozen() {
+	if rc.frozen {
+		log.Panic("You cannot modify a route collection that has been frozen ", rc)
+	}
 }
 
 func (rc *RouteCollection) setPrefix(prefix string) *RouteCollection {
+	rc.mustNotBeFrozen()
+	if prefix != "" {
+		if prefix[0] != '/' {
+			prefix = "/" + prefix
+		}
+		if strings.HasSuffix(prefix, "/") {
+			prefix = prefix + "?"
+		}
+	}
+
 	rc.prefix = prefix
 	return rc
 }
 
-// Freeze freezes a route collection
-func (rc *RouteCollection) Freeze() {
-	if rc.IsFrozen() == false {
-		rc.frozen = true
-		for _, route := range rc.Routes {
-			route.Freeze()
+// Flush freezes a route collection
+func (rc *RouteCollection) Flush() {
+
+	if rc.IsFrozen() == true {
+		return
+	}
+
+	for _, route := range rc.Routes {
+		route.path = rc.prefix + route.path
+		route.freeze()
+	}
+
+	if len(rc.Children) > 0 {
+
+		for _, routeCollection := range rc.Children {
+			routeCollection.setPrefix(rc.prefix + routeCollection.prefix).Flush()
+			for _, route := range routeCollection.Routes {
+				rc.Routes = append(rc.Routes, route)
+			}
+			routeCollection.Routes = []*Route{}
 		}
 	}
+	rc.frozen = true
 }
 
 // IsFrozen returns true if the route collection is frozen
@@ -469,8 +582,8 @@ func (rc RouteCollection) IsFrozen() bool {
 }
 
 // Use creates a passthrough route usefull for middlewares
-func (rc *RouteCollection) Use(path string, handlerFunctions ...HandlerFunction) *Route {
-	route := rc.All(path, handlerFunctions...)
+func (rc *RouteCollection) Use(path string, handlerFunction HandlerFunction) *Route {
+	route := rc.All(path, handlerFunction)
 	route.passthrough = true
 	return route
 }
@@ -478,62 +591,72 @@ func (rc *RouteCollection) Use(path string, handlerFunctions ...HandlerFunction)
 // Mount mounts a route collection on a path. All routes in the route collection will be prefixed
 // with that path.
 func (rc *RouteCollection) Mount(path string, routeCollection *RouteCollection) *RouteCollection {
-	rc.Children = append(rc.Children, routeCollection)
+	if !routeCollection.hasParent {
+
+		rc.Children = append(rc.Children, routeCollection)
+		routeCollection.setPrefix(path)
+		routeCollection.hasParent = true
+	}
 	return rc
 }
 
 // Get creates a GET route
-func (rc *RouteCollection) Get(path string, handlerFunctions ...HandlerFunction) *Route {
-	route := rc.All(path, handlerFunctions...)
+func (rc *RouteCollection) Get(path string, handlerFunction HandlerFunction) *Route {
+	route := rc.All(path, handlerFunction)
 	route.SetMethods([]string{"GET", "HEAD"})
 	return route
 }
 
 // Post creates a POST route
-func (rc *RouteCollection) Post(path string, handlerFunctions ...HandlerFunction) *Route {
-	route := rc.All(path, handlerFunctions...)
+func (rc *RouteCollection) Post(path string, handlerFunction HandlerFunction) *Route {
+	route := rc.All(path, handlerFunction)
 	route.SetMethods([]string{"POST"})
 	return route
 }
 
 // Put creates a PUT route
-func (rc *RouteCollection) Put(path string, handlerFunctions ...HandlerFunction) *Route {
-	route := rc.All(path, handlerFunctions...)
+func (rc *RouteCollection) Put(path string, handlerFunction HandlerFunction) *Route {
+	route := rc.All(path, handlerFunction)
 	route.SetMethods([]string{"PUT"})
 	return route
 }
 
 // Delete creates a DELETE route
-func (rc *RouteCollection) Delete(path string, handlerFunctions ...HandlerFunction) *Route {
-	route := rc.All(path, handlerFunctions...)
+func (rc *RouteCollection) Delete(path string, handlerFunction HandlerFunction) *Route {
+	route := rc.All(path, handlerFunction)
 	route.SetMethods([]string{"DELETE"})
 	return route
 }
 
 // All creates a route that matches all methods
-func (rc *RouteCollection) All(path string, handlerFunctions ...HandlerFunction) *Route {
-	if rc.IsFrozen() {
-		panic(fmt.Sprintf("RouteCollection %v is frozen, no route can be added.", rc))
-	}
+func (rc *RouteCollection) All(path string, handlerFunction HandlerFunction) *Route {
+	rc.mustNotBeFrozen()
 	route := NewRoute(path)
-	route.SetHandlers(handlerFunctions...)
+	route.SetHandler(handlerFunction)
 	rc.Routes = append(rc.Routes, route)
 	return route
 }
 
 /**********************************/
-/*         REQUEST MATCHER        */
+/*            MATCHERS            */
 /**********************************/
+
+// Matcher is a type something that can match a http.Request
+type Matcher interface {
+	Match(*http.Request) bool
+}
 
 // RequestMatcher match request path to route pattern
 type RequestMatcher struct {
 	routeCollection *RouteCollection
 }
 
+// NewRequestMatcher returns a new RequestMatcher
 func NewRequestMatcher(routeCollection *RouteCollection) *RequestMatcher {
 	return &RequestMatcher{routeCollection}
 }
 
+// Match returns a route that matches a http.Request
 func (rm *RequestMatcher) Match(request *http.Request) *Route {
 	// try to match current request url with a route
 	if len(rm.routeCollection.Routes) > 0 {
@@ -547,6 +670,7 @@ func (rm *RequestMatcher) Match(request *http.Request) *Route {
 	return nil
 }
 
+// MatchAll matches all routes matching the request in the route collection
 func (rm *RequestMatcher) MatchAll(request *http.Request) (matches []*Route) {
 	if len(rm.routeCollection.Routes) > 0 {
 		for _, route := range rm.routeCollection.Routes {
@@ -659,6 +783,85 @@ func (i Injector) Parent() *Injector {
 }
 
 /**********************************/
+/*         EVENT EMITTER          */
+/**********************************/
+
+// Listener is an event handler function
+type Listener *func(string, ...interface{}) bool
+
+// EventEmitter listens for and emits events
+type EventEmitter struct {
+	handlers map[string][]Listener
+}
+
+// NewEventEmitter returns a new event emitter
+func NewEventEmitter() *EventEmitter {
+	return &EventEmitter{
+		handlers: map[string][]Listener{},
+	}
+}
+
+// Emit emits an event
+func (em *EventEmitter) Emit(event string, arguments ...interface{}) {
+	if len(em.handlers) > 0 && em.handlers[event] != nil {
+		for _, handler := range em.handlers[event] {
+			Continue := (*handler)(event, arguments...)
+			if !Continue {
+				break
+			}
+		}
+	}
+}
+
+// AddListener adds a new listener function pointer
+func (em *EventEmitter) AddListener(event string, listener Listener) {
+	if em.handlers[event] != nil {
+		em.handlers[event] = []Listener{}
+	}
+	em.handlers[event] = append(em.handlers[event], listener)
+}
+
+// RemoveListener removes a listener function pointer
+func (em *EventEmitter) RemoveListener(event string, listener Listener) bool {
+	var found bool
+	if em.handlers[event] != nil {
+		for i, handler := range em.handlers[event] {
+			if handler == listener {
+
+				head := em.handlers[event][0:i]
+				if length := len(em.handlers); i == length-1 {
+					em.handlers[event] = head
+				} else {
+					tail := em.handlers[event][i+1 : length-1]
+					em.handlers[event] = append(head, tail...)
+				}
+
+				found = true
+				break
+			}
+		}
+	}
+	return found
+}
+
+// RemoveAllListeners remove all listeners given an event and returns the listener slice
+func (em *EventEmitter) RemoveAllListeners(event string) []Listener {
+	listeners := []Listener{}
+	if em.handlers[event] != nil {
+		listeners, em.handlers[event] = em.handlers[event], listeners
+	}
+	return listeners
+}
+
+// HasListener returns true if an event has listeners
+func (em *EventEmitter) HasListener(event string) bool {
+	if em.handlers[event] != nil && len(em.handlers[event]) > 0 {
+		return true
+	}
+	return false
+}
+
+/**********************************/
 /*              UTILS             */
 /**********************************/
 
@@ -680,6 +883,21 @@ func MustBeCallable(potentialFunction interface{}) {
 	}
 }
 
+// Must will panic if err is not nil
+func Must(err error) {
+	if err != nil {
+		panic(err)
+	}
+}
+
+// MustWithResult returns a result or panics on error
+func MustWithResult(result interface{}, err error) interface{} {
+	if err != nil {
+		panic(err)
+	}
+	return result
+}
+
 /**********************************/
 /*             TYPEDEFS           */
 /**********************************/
@@ -687,96 +905,61 @@ func MustBeCallable(potentialFunction interface{}) {
 // ResponseWriterWithCode exposes the status of a response.
 type ResponseWriterWithCode struct {
 	http.ResponseWriter
-	Code int
+	code          int
+	writtenLength int
 }
 
 // WriteHeader sends an HTTP response header with status code.
 func (r *ResponseWriterWithCode) WriteHeader(code int) {
-	r.Code = code
+	r.code = code
 	r.ResponseWriter.WriteHeader(code)
+}
+
+// Write writes to the response
+func (r *ResponseWriterWithCode) Write(b []byte) (int, error) {
+	i, err := r.ResponseWriter.Write(b)
+	r.writtenLength = r.writtenLength + len(b)
+	return i, err
+}
+
+// Code returns the response status code
+func (r *ResponseWriterWithCode) Code() int {
+	return r.code
+}
+
+// Length returns the number of bytes written in the response
+func (r *ResponseWriterWithCode) Length() int {
+	return r.writtenLength
 }
 
 // Next represents a function
 type Next func()
 
 /**********************************/
-/*        MIDDLEWARE STACK        */
+/*             MATCHERS           */
 /**********************************/
-
-type HandlerFuncWithNext func(http.ResponseWriter, *http.Request, http.HandlerFunc)
-
-// Stack is a middleware stack
-type Stack struct {
-	handlers []HandlerFuncWithNext
+// MethodMatcher matches a request by method
+type MethodMatcher struct {
+	Methods []string
 }
 
-// NewStack returns a new Stack
-func NewStack(handlers ...HandlerFuncWithNext) *Stack {
-	return &Stack{handlers}
+// NewMethodMatcher returns a new MethodMatcher
+func NewMethodMatcher(verbs ...string) *MethodMatcher {
+
+	return &MethodMatcher{}
 }
 
-// NewStackFunc returns a HandlerFunc ready to be used with http;HandleFunc
-func NewStackFunc(handlers ...HandlerFuncWithNext) http.HandlerFunc {
-	return NewStack(handlers...).ServeHTTP
-}
-
-// ServeHTTP serves http requests
-func (s *Stack) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
-	var handlers = s.handlers
-	var next http.HandlerFunc
-	next = func(rw http.ResponseWriter, r *http.Request) {
-		if len(handlers) <= 0 {
-			return
-		}
-		handler := handlers[0]
-		handlers = handlers[1:]
-		handler(rw, r, next)
+// Match returns true if the matcher matches the request method
+func (methodMatcher MethodMatcher) Match(request *http.Request) bool {
+	if len(methodMatcher.Methods) == 0 {
+		return true
 	}
-	next(rw, r)
-}
-
-// StackWithInjector is a middleware stack with a dependency injection container
-type StackWithInjector struct {
-	handlers []HandlerFunction
-	injector *Injector
-	next     Next
-}
-
-// NewStackWithInjector returns a new StackWithInjector
-func NewStackWithInjector(injector *Injector, handlers ...HandlerFunction) *StackWithInjector {
-	stack := &StackWithInjector{}
-	stack.handlers = handlers
-	stack.injector = NewInjector()
-	stack.injector.SetParent(injector)
-	return stack
-}
-
-func (s *StackWithInjector) SetNext(function Next) {
-	s.next = function
-}
-func (s *StackWithInjector) HasNext() bool {
-
-	return s.next != nil
-}
-
-// ServeHTTP serves http request
-func (s *StackWithInjector) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
-	var handlers = s.handlers
-	var next Next
-	s.injector.Register(rw)
-	s.injector.Register(r)
-	next = func() {
-		if len(handlers) <= 0 {
-			if s.HasNext() {
-				s.next()
-			}
-			return
+	match := false
+	for _, method := range methodMatcher.Methods {
+		if strings.ToUpper(method) == strings.ToUpper(request.Method) {
+			match = true
+			break
 		}
-		handler := handlers[0]
-		handlers = handlers[1:]
-		MustBeCallable(handler)
-		s.injector.MustApply(handler)
 	}
-	s.injector.Register(next)
-	next()
+	return match
 }
