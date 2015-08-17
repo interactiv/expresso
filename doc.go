@@ -1,102 +1,21 @@
-// Copyrights 2015 mparaiso <mparaiso@online.fr>
-// License MIT
-
-// Monorail
+//    Monorail version 0.4
+//    Monorail is a web framework for the Go language
+//    Copyright (C) 2015  mparaiso <mparaiso@online.fr>
 //
-// version 0.4
+//    This program is free software: you can redistribute it and/or modify
+//    it under the terms of the GNU General Public License as published by
+//    the Free Software Foundation, either version 3 of the License, or
+//    (at your option) any later version.
+
+//    This program is distributed in the hope that it will be useful,
+//    but WITHOUT ANY WARRANTY; without even the implied warranty of
+//    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+//    GNU General Public License for more details.
+
+//    You should have received a copy of the GNU General Public License
+//    along with this program.  If not, see <http://www.gnu.org/licenses/>
+
+// monorail
 //
 // The most awesome nano webframework for Go
-//
-// Quick start:
-//
-//
-//    package main
-//
-//    import (
-//    	"fmt"
-//    	"net/http"
-//    	"time"
-//
-//    	"github.com/interactiv/monorail"
-//    )
-//
-//    //somewhere in the file the following types are declared :
-//
-//    type User struct {
-//    	Name string
-//    	Id   string
-//    }
-//
-//    type Users struct{}
-//
-//    func (_ Users) GetById(id string) *User {
-//    	users := map[string]*User{
-//    		"100": &User{Name: "John", Id: "100"},
-//    		"200": &User{Name: "Jane", Id: "200"},
-//    	}
-//    	return users[id]
-//    }
-//
-//    func main() {
-//    	var users Users
-//    	/* creates a new monorail app*/
-//    	app := monorail.New()
-//
-//    	/* creates a middleware that will be called with each request*/
-//    	app.Use("/", func(next monorail.Next) {
-//    		t0 := time.Now()
-//    		next()
-//    		t1 := time.Now()
-//    		fmt.Println("lapse: ", t1.Sub(t0))
-//    	})
-//    	/*
-//    	   creates a route with a request variable called name
-//    	   handler's arguments are automatically injected, so the framework
-//    	   is fully compatible with the default http.HandlerFunc type.
-//    	*/
-//    	app.Get("/greet/:name", func(ctx *monorail.Context, rw http.ResponseWriter) {
-//    		rw.Write([]byte("Hello " + ctx.RequestVars["name"].(string)))
-//    	}).
-//    		// Assert the name variable is made of alpha characters
-//    		Assert("name", "[A-Z a-z]+")
-//    	/*
-//    	   create a new route collection
-//    	*/
-//    	adminRoutes := monorail.NewRouteCollection()
-//
-//    	adminRoutes.Use("/", func(rw http.ResponseWriter, r *http.Request, next monorail.Next) {
-//    		if r.URL.Query().Get("password") != "secret" {
-//    			http.Redirect(rw, r, "/", http.StatusForbidden)
-//    			return
-//    		}
-//    		next()
-//    	})
-//
-//    	/*
-//    	   We use dependency injection to make our app aware of the users value
-//    	   Everytime we will inject the Users type, it will resolve the users
-//    	   value
-//    	*/
-//    	app.Injector().Register(users)
-//
-//    	// The Convert method converts a request variable with the help
-//    	// of a converter function,allowing to use a custom type
-//    	// directly in a request handler,arguments are injected
-//    	// with the help of the Injector, the user request
-//    	// variable is passed as a string
-//    	adminRoutes.All("/:user", func(ctx *monorail.Context) {
-//    		// sends a JSON response to the client
-//    		ctx.WriteJSON(ctx.RequestVars["user"].(*User))
-//    	}).Convert("user", func(user string, users Users) *User {
-//    		return users.GetById(user)
-//    	}).Assert("user", "\\d+")
-//
-//    	//register subroute to the main route with prefix /admin
-//    	app.Mount("/admin", adminRoutes)
-//
-//    	//start the webserver on port 80
-//    	http.ListenAndServe(":80", app)
-//
-//    }
-//
 package monorail

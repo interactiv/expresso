@@ -1,5 +1,19 @@
-// Copyrights 2015 mparaiso <mparaiso@online.fr>
-// License MIT
+//    Monorail version 0.4
+//    Monorail is a web framework for the Go language
+//    Copyright (C) 2015  mparaiso <mparaiso@online.fr>
+//
+//    This program is free software: you can redistribute it and/or modify
+//    it under the terms of the GNU General Public License as published by
+//    the Free Software Foundation, either version 3 of the License, or
+//    (at your option) any later version.
+
+//    This program is distributed in the hope that it will be useful,
+//    but WITHOUT ANY WARRANTY; without even the implied warranty of
+//    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+//    GNU General Public License for more details.bytes
+
+//    You should have received a copy of the GNU General Public License
+//    along with this program.  If not, see <http://www.gnu.org/licenses/>
 
 package monorail_test
 
@@ -138,7 +152,7 @@ func TestMatch(t *testing.T) {
 	}).SetMethods([]string{"GET", "POST"})
 	app.All("/bar", func(rw http.ResponseWriter) {
 		rw.WriteHeader(http.StatusOK)
-	}).SetMethods([]string{"*"})
+	}).SetMethods([]string{})
 	server := httptest.NewServer(app)
 	defer server.Close()
 	res, err := http.Get(server.URL + "/foo")
@@ -325,6 +339,26 @@ func TestmonorailError401(t *testing.T) {
 	e.Expect(res.StatusCode).ToEqual(401)
 	body := string(monorail.MustWithResult(ioutil.ReadAll(res.Body)).([]byte))
 	e.Expect(body).ToEqual(notAuthorizedMessage)
+}
+
+// TestMonorailRouteMatchers test the new route matcher api
+func TestMonorailRouteMatchers(t *testing.T) {
+	e := expect.New(t)
+	requests := map[string]*http.Request{
+		"GET":  &http.Request{Method: "GET"},
+		"PUT":  &http.Request{Method: "PUT"},
+		"HEAD": &http.Request{Method: "HEAD"},
+		"POST": &http.Request{Method: "POST"},
+	}
+	methodMatcher := monorail.NewMethodMatcher()
+	for _, request := range requests {
+		e.Expect(methodMatcher.Match(request)).ToBeTrue()
+	}
+
+	methodMatcher = monorail.NewMethodMatcher("GET", "HEAD")
+	e.Expect(methodMatcher.Match(requests["GET"])).ToBeTrue()
+	e.Expect(methodMatcher.Match(requests["HEAD"])).ToBeTrue()
+	e.Expect(methodMatcher.Match(requests["POST"])).Not().ToBeTrue()
 }
 
 // TestPrefix makes sure that given a mounted route at /
