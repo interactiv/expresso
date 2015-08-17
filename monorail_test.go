@@ -10,7 +10,7 @@
 //    This program is distributed in the hope that it will be useful,
 //    but WITHOUT ANY WARRANTY; without even the implied warranty of
 //    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-//    GNU General Public License for more details.
+//    GNU General Public License for more details.bytes
 
 //    You should have received a copy of the GNU General Public License
 //    along with this program.  If not, see <http://www.gnu.org/licenses/>
@@ -152,7 +152,7 @@ func TestMatch(t *testing.T) {
 	}).SetMethods([]string{"GET", "POST"})
 	app.All("/bar", func(rw http.ResponseWriter) {
 		rw.WriteHeader(http.StatusOK)
-	}).SetMethods([]string{"*"})
+	}).SetMethods([]string{})
 	server := httptest.NewServer(app)
 	defer server.Close()
 	res, err := http.Get(server.URL + "/foo")
@@ -355,9 +355,10 @@ func TestMonorailRouteMatchers(t *testing.T) {
 		e.Expect(methodMatcher.Match(request)).ToBeTrue()
 	}
 
-	methodMatcher = monorail.NewMethodMatcher("GET")
+	methodMatcher = monorail.NewMethodMatcher("GET", "HEAD")
 	e.Expect(methodMatcher.Match(requests["GET"])).ToBeTrue()
 	e.Expect(methodMatcher.Match(requests["HEAD"])).ToBeTrue()
+	e.Expect(methodMatcher.Match(requests["POST"])).Not().ToBeTrue()
 }
 
 // TestPrefix makes sure that given a mounted route at /

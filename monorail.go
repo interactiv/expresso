@@ -317,12 +317,13 @@ type Route struct {
 	name string
 	// wether the route is intended to be a middlware or not
 	passthrough bool
+	matchers    []Matcher
 }
 
 // NewRoute creates a new route with a path that handles all methods
 func NewRoute(path string) *Route {
 	return &Route{
-		methods:     []string{"*"},
+		methods:     []string{},
 		params:      []string{},
 		converters:  map[string]interface{}{},
 		assertions:  map[string]string{},
@@ -372,16 +373,16 @@ func (r *Route) SetHandler(handlerFunc HandlerFunction) {
 }
 
 // MethodMatch returns true if that method is handled by the route
-func (r Route) MethodMatch(method string) bool {
-	match := false
-	for _, m := range r.Methods() {
-		if strings.TrimSpace(strings.ToUpper(method)) == m || m == "*" {
-			match = true
-			break
-		}
-	}
-	return match
-}
+//func (r Route) MethodMatch(method string) bool {
+//	match := false
+//	for _, m := range r.Methods() {
+//		if strings.TrimSpace(strings.ToUpper(method)) == m || m == "*" {
+//			match = true
+//			break
+//		}
+//	}
+//	return match
+//}
 
 // Freeze freezes a route , which will make it read only
 func (r *Route) freeze() *Route {
@@ -438,7 +439,12 @@ func (r *Route) freeze() *Route {
 	if r.name == "" {
 		r.name = regexp.MustCompile("\\W+").ReplaceAllString(r.path+"_"+fmt.Sprint(r.methods), "_")
 	}
+	r.matchers = []Matcher{
+		NewPatternMatcher(r.pattern),
+		NewMethodMatcher(r.Methods()...),
+	}
 	r.frozen = true
+
 	return r
 }
 
@@ -656,25 +662,18 @@ func NewRequestMatcher(routeCollection *RouteCollection) *RequestMatcher {
 	return &RequestMatcher{routeCollection}
 }
 
-// Match returns a route that matches a http.Request
-func (rm *RequestMatcher) Match(request *http.Request) *Route {
-	// try to match current request url with a route
-	if len(rm.routeCollection.Routes) > 0 {
-		for _, route := range rm.routeCollection.Routes {
-			if route.pattern.MatchString(request.URL.Path) && route.MethodMatch(request.Method) {
-				return route
-
-			}
-		}
-	}
-	return nil
-}
-
 // MatchAll matches all routes matching the request in the route collection
 func (rm *RequestMatcher) MatchAll(request *http.Request) (matches []*Route) {
 	if len(rm.routeCollection.Routes) > 0 {
 		for _, route := range rm.routeCollection.Routes {
-			if route.pattern.MatchString(request.URL.Path) && route.MethodMatch(request.Method) {
+			match := true
+			for _, matcher := range route.matchers {
+				if !matcher.Match(request) {
+					match = false
+					break
+				}
+			}
+			if match == true {
 				matches = append(matches, route)
 			}
 		}
@@ -938,28 +937,46 @@ type Next func()
 /**********************************/
 /*             MATCHERS           */
 /**********************************/
+
 // MethodMatcher matches a request by method
 type MethodMatcher struct {
-	Methods []string
+	methods []string
 }
 
 // NewMethodMatcher returns a new MethodMatcher
 func NewMethodMatcher(verbs ...string) *MethodMatcher {
-
-	return &MethodMatcher{}
+	return &MethodMatcher{methods: verbs}
 }
 
 // Match returns true if the matcher matches the request method
 func (methodMatcher MethodMatcher) Match(request *http.Request) bool {
-	if len(methodMatcher.Methods) == 0 {
+	if len(methodMatcher.methods) == 0 {
 		return true
 	}
 	match := false
-	for _, method := range methodMatcher.Methods {
+	for _, method := range methodMatcher.methods {
 		if strings.ToUpper(method) == strings.ToUpper(request.Method) {
 			match = true
 			break
 		}
 	}
 	return match
+}
+
+// PatternMatcher matches a request by path
+type PatternMatcher struct {
+	pattern *regexp.Regexp
+}
+
+// NewPatternMatcher returns a new PatternMatcher
+func NewPatternMatcher(pattern *regexp.Regexp) *PatternMatcher {
+	return &PatternMatcher{pattern}
+}
+func (patternMatcher PatternMatcher) Pattern() *regexp.Regexp {
+	return patternMatcher.pattern
+}
+
+// Match returns true if the matcher matches the request url path
+func (patternMatcher PatternMatcher) Match(request *http.Request) bool {
+	return patternMatcher.pattern.MatchString(request.URL.Path)
 }

@@ -15,7 +15,7 @@
 //    You should have received a copy of the GNU General Public License
 //    along with this program.  If not, see <http://www.gnu.org/licenses/>
 
-// expresso
+// monorail
 //
 // The most awesome nano webframework for Go
-package expresso
+package monorail
