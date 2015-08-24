@@ -367,7 +367,7 @@ func TestPrefix(t *testing.T) {
 	const message = "example"
 	e := expect.New(t)
 	app := monorail.New()
-	routeCollection := monorail.NewRouteCollection()
+	routeCollection := monorail.NewControllerCollection()
 	routeCollection.All("/"+message, func(rw http.ResponseWriter) {
 		rw.Write([]byte(message))
 	})
@@ -412,7 +412,7 @@ func TestEventEmitter(t *testing.T) {
 /**********************************/
 
 func TestAddRoute(t *testing.T) {
-	rc := monorail.NewRouteCollection()
+	rc := monorail.NewControllerCollection()
 	route := monorail.NewRoute("/")
 	rc.AddRoute(route)
 	e := expect.New(t)
@@ -422,7 +422,7 @@ func TestAddRoute(t *testing.T) {
 func TestRouteCollectionMount(t *testing.T) {
 	e := expect.New(t)
 	app := monorail.New()
-	subRoutes := monorail.NewRouteCollection()
+	subRoutes := monorail.NewControllerCollection()
 	subRoutes.Use("/", func(ctx *monorail.Context, next monorail.Next) {
 		ctx.WriteString("Use")
 		next()
@@ -431,7 +431,7 @@ func TestRouteCollectionMount(t *testing.T) {
 		ctx.WriteString("SubRoutes")
 	})
 	app.Mount("/subroutes", subRoutes)
-	subRoutes2 := monorail.NewRouteCollection()
+	subRoutes2 := monorail.NewControllerCollection()
 	subRoutes2.All("/", func(ctx *monorail.Context) {
 		ctx.WriteString("SubSubRoutes")
 	})

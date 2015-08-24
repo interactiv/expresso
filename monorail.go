@@ -43,7 +43,7 @@ var (
 // Monorail represents an monorail application
 type Monorail struct {
 	debug bool
-	*RouteCollection
+	*ControllerCollection
 	*EventEmitter
 	RequestMatcher *RequestMatcher
 	booted         bool
@@ -54,10 +54,10 @@ type Monorail struct {
 // New creates an monorail application
 func New() *Monorail {
 	monorail := &Monorail{
-		RouteCollection: NewRouteCollection(),
-		EventEmitter:    NewEventEmitter(),
-		injector:        NewInjector(),
-		errorHandlers:   map[int]HandlerFunction{},
+		ControllerCollection: NewControllerCollection(),
+		EventEmitter:         NewEventEmitter(),
+		injector:             NewInjector(),
+		errorHandlers:        map[int]HandlerFunction{},
 	}
 	monorail.injector.Register(monorail)
 	return monorail
@@ -66,7 +66,7 @@ func New() *Monorail {
 // Boot boots the application
 func (e *Monorail) Boot() {
 	if !e.Booted() {
-		e.RouteCollection.Flush()
+		e.ControllerCollection.Flush()
 		e.booted = true
 	}
 }
@@ -111,7 +111,7 @@ func (e *Monorail) ServeHTTP(responseWriter http.ResponseWriter, request *http.R
 		e.Error(404, NotFoundErrorHandler)
 	}
 	if e.RequestMatcher == nil {
-		e.RequestMatcher = NewRequestMatcher(e.RouteCollection)
+		e.RequestMatcher = NewRequestMatcher(e.ControllerCollection)
 	}
 	if !e.Booted() {
 		e.Boot()
@@ -238,13 +238,6 @@ func NewContext(response http.ResponseWriter, request *http.Request) *Context {
 		Response:             response,
 	}
 	return ctx
-}
-
-// SetStatus sets the the status code
-func (ctx *Context) SetStatus(status int) {
-
-	ctx.Response.WriteHeader(status)
-
 }
 
 // Next calls the next middleware in the middleware chain
@@ -513,36 +506,36 @@ func (r *Route) Attribute(attr string) interface{} {
 }
 
 /**********************************/
-/*   ROUTE COLLECTION             */
+/*   CONTROLLER COLLECTION             */
 /**********************************/
 
-// RouteCollection is a collection of routes
-type RouteCollection struct {
+// ControllerCollection is a collection of routes
+type ControllerCollection struct {
 	Routes    []*Route
 	prefix    string
 	frozen    bool
-	Children  []*RouteCollection
+	Children  []*ControllerCollection
 	hasParent bool
 }
 
-// NewRouteCollection creates a new RouteCollection
-func NewRouteCollection() *RouteCollection {
-	return &RouteCollection{Routes: []*Route{}, Children: []*RouteCollection{}}
+// NewControllerCollection creates a new ControllerCollection
+func NewControllerCollection() *ControllerCollection {
+	return &ControllerCollection{Routes: []*Route{}, Children: []*ControllerCollection{}}
 }
 
 // AddRoute adds a route to the route collection
-func (rc *RouteCollection) AddRoute(r *Route) *RouteCollection {
+func (rc *ControllerCollection) AddRoute(r *Route) *ControllerCollection {
 	rc.Routes = append(rc.Routes, r)
 	return rc
 }
 
-func (rc *RouteCollection) mustNotBeFrozen() {
+func (rc *ControllerCollection) mustNotBeFrozen() {
 	if rc.frozen {
 		log.Panic("You cannot modify a route collection that has been frozen ", rc)
 	}
 }
 
-func (rc *RouteCollection) setPrefix(prefix string) *RouteCollection {
+func (rc *ControllerCollection) setPrefix(prefix string) *ControllerCollection {
 	rc.mustNotBeFrozen()
 	if prefix != "" {
 		if prefix[0] != '/' {
@@ -558,7 +551,7 @@ func (rc *RouteCollection) setPrefix(prefix string) *RouteCollection {
 }
 
 // Flush freezes a route collection
-func (rc *RouteCollection) Flush() {
+func (rc *ControllerCollection) Flush() {
 
 	if rc.IsFrozen() == true {
 		return
@@ -583,12 +576,12 @@ func (rc *RouteCollection) Flush() {
 }
 
 // IsFrozen returns true if the route collection is frozen
-func (rc RouteCollection) IsFrozen() bool {
+func (rc ControllerCollection) IsFrozen() bool {
 	return rc.frozen
 }
 
 // Use creates a passthrough route usefull for middlewares
-func (rc *RouteCollection) Use(path string, handlerFunction HandlerFunction) *Route {
+func (rc *ControllerCollection) Use(path string, handlerFunction HandlerFunction) *Route {
 	route := rc.All(path, handlerFunction)
 	route.passthrough = true
 	return route
@@ -596,7 +589,7 @@ func (rc *RouteCollection) Use(path string, handlerFunction HandlerFunction) *Ro
 
 // Mount mounts a route collection on a path. All routes in the route collection will be prefixed
 // with that path.
-func (rc *RouteCollection) Mount(path string, routeCollection *RouteCollection) *RouteCollection {
+func (rc *ControllerCollection) Mount(path string, routeCollection *ControllerCollection) *ControllerCollection {
 	if !routeCollection.hasParent {
 
 		rc.Children = append(rc.Children, routeCollection)
@@ -607,35 +600,35 @@ func (rc *RouteCollection) Mount(path string, routeCollection *RouteCollection) 
 }
 
 // Get creates a GET route
-func (rc *RouteCollection) Get(path string, handlerFunction HandlerFunction) *Route {
+func (rc *ControllerCollection) Get(path string, handlerFunction HandlerFunction) *Route {
 	route := rc.All(path, handlerFunction)
 	route.SetMethods([]string{"GET", "HEAD"})
 	return route
 }
 
 // Post creates a POST route
-func (rc *RouteCollection) Post(path string, handlerFunction HandlerFunction) *Route {
+func (rc *ControllerCollection) Post(path string, handlerFunction HandlerFunction) *Route {
 	route := rc.All(path, handlerFunction)
 	route.SetMethods([]string{"POST"})
 	return route
 }
 
 // Put creates a PUT route
-func (rc *RouteCollection) Put(path string, handlerFunction HandlerFunction) *Route {
+func (rc *ControllerCollection) Put(path string, handlerFunction HandlerFunction) *Route {
 	route := rc.All(path, handlerFunction)
 	route.SetMethods([]string{"PUT"})
 	return route
 }
 
 // Delete creates a DELETE route
-func (rc *RouteCollection) Delete(path string, handlerFunction HandlerFunction) *Route {
+func (rc *ControllerCollection) Delete(path string, handlerFunction HandlerFunction) *Route {
 	route := rc.All(path, handlerFunction)
 	route.SetMethods([]string{"DELETE"})
 	return route
 }
 
 // All creates a route that matches all methods
-func (rc *RouteCollection) All(path string, handlerFunction HandlerFunction) *Route {
+func (rc *ControllerCollection) All(path string, handlerFunction HandlerFunction) *Route {
 	rc.mustNotBeFrozen()
 	route := NewRoute(path)
 	route.SetHandler(handlerFunction)
@@ -654,11 +647,11 @@ type Matcher interface {
 
 // RequestMatcher match request path to route pattern
 type RequestMatcher struct {
-	routeCollection *RouteCollection
+	routeCollection *ControllerCollection
 }
 
 // NewRequestMatcher returns a new RequestMatcher
-func NewRequestMatcher(routeCollection *RouteCollection) *RequestMatcher {
+func NewRequestMatcher(routeCollection *ControllerCollection) *RequestMatcher {
 	return &RequestMatcher{routeCollection}
 }
 
