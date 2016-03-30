@@ -25,7 +25,6 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"reflect"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -195,30 +194,6 @@ func TestUse(t *testing.T) {
 	body, err := ioutil.ReadAll(res.Body)
 	e.Expect(err).ToBeNil()
 	e.Expect(string(body)).ToContain("Use")
-}
-
-func TestConvert(t *testing.T) {
-
-	e := expect.New(t)
-	app := micro.New()
-	app.Get("/person/:person", func(ctx *micro.Context, rw http.ResponseWriter) {
-		var person *Person
-		person = ctx.ConvertedRequestVars["person"].(*Person)
-		fmt.Fprintf(rw, "%s", person.name)
-		e.Expect(person).Not().ToBeNil()
-	}).Convert("person", func(person string, r *http.Request) *Person {
-		id, err := strconv.Atoi(person)
-		if err != nil {
-			return nil
-		}
-		return PersonRepository.Find(id)
-	})
-	server := httptest.NewServer(app)
-	defer server.Close()
-	response, err := http.Get(server.URL + "/person/0")
-	e.Expect(err).ToBeNil()
-	defer response.Body.Close()
-	e.Expect(response.StatusCode).ToBe(200)
 }
 
 func TestAssert(t *testing.T) {
