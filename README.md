@@ -2,7 +2,8 @@
 
 [![Build Status](https://travis-ci.org/interactiv/micro.svg?branch=master)](https://travis-ci.org/interactiv/micro) [![Circle CI](https://circleci.com/gh/interactiv/micro.svg?style=svg)](https://circleci.com/gh/interactiv/micro) [![GoDoc](https://godoc.org/github.com/interactiv/micro?status.svg)](https://godoc.org/github.com/interactiv/micro) [![Coverage](http://gocover.io/_badge/github.com/interactiv/micro?0)](http://gocover.io/github.com/interactiv/micro)
 
-awesome nano webframework for Go
+micro is a web micro framework written in go. It aims at simplyfing writting web apps in go.
+micro has no external dependencies other than Go standard library.
 	
 Author:  mparaiso <mparaiso@online.fr>
 
