@@ -1,5 +1,5 @@
-//    Monorail version 0.4
-//    Monorail is a web framework for the Go language
+//    Micro version 0.4
+//    Micro is a web framework for the Go language
 //    Copyright (C) 2015  mparaiso <mparaiso@online.fr>
 //
 //    This program is free software: you can redistribute it and/or modify
@@ -15,7 +15,7 @@
 //    You should have received a copy of the GNU General Public License
 //    along with this program.  If not, see <http://www.gnu.org/licenses/>
 
-// monorail
+// micro
 //
 // The most awesome nano webframework for Go
-package monorail
+package micro

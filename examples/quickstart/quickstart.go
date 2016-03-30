@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/interactiv/monorail"
+	"github.com/interactiv/micro"
 )
 
 //somewhere in the file the following types are declared :
@@ -30,11 +30,11 @@ func (_ Users) GetById(id string) *User {
 
 func main() {
 	var users Users
-	/* creates a new monorail app*/
-	app := monorail.New()
+	/* creates a new micro app*/
+	app := micro.New()
 
 	/* creates a middleware that will be called with each request*/
-	app.Use("/", func(next monorail.Next) {
+	app.Use("/", func(next micro.Next) {
 		t0 := time.Now()
 		next()
 		t1 := time.Now()
@@ -45,7 +45,7 @@ func main() {
 	   handler's arguments are automatically injected, so the framework
 	   is fully compatible with the default http.HandlerFunc type.
 	*/
-	app.Get("/greet/:name?", func(ctx *monorail.Context, rw http.ResponseWriter) {
+	app.Get("/greet/:name?", func(ctx *micro.Context, rw http.ResponseWriter) {
 		rw.Write([]byte("Hello " + ctx.RequestVars["name"]))
 	}).
 		// Assert the name variable is made of alpha characters
@@ -53,9 +53,9 @@ func main() {
 	/*
 	   create a new route collection
 	*/
-	adminRoutes := monorail.NewRouteCollection()
+	adminRoutes := micro.NewRouteCollection()
 
-	adminRoutes.Use("/", func(rw http.ResponseWriter, r *http.Request, next monorail.Next) {
+	adminRoutes.Use("/", func(rw http.ResponseWriter, r *http.Request, next micro.Next) {
 		if r.URL.Query().Get("password") != "secret" {
 			http.Redirect(rw, r, "/", http.StatusForbidden)
 			return
@@ -75,7 +75,7 @@ func main() {
 	// directly in a request handler,arguments are injected
 	// with the help of the Injector, the user request
 	// variable is passed as a string
-	adminRoutes.All("/:user", func(ctx *monorail.Context) {
+	adminRoutes.All("/:user", func(ctx *micro.Context) {
 		// sends a JSON response to the client
 		ctx.WriteJSON(ctx.ConvertedRequestVars["user"].(*User))
 	}).Convert("user", func(user string, users Users) *User {

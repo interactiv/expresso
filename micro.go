@@ -1,5 +1,5 @@
-//    Monorail version 0.4
-//    Monorail is a web framework for the Go language
+//    Micro version 0.4
+//    Micro is a web framework for the Go language
 //    Copyright (C) 2015  mparaiso <mparaiso@online.fr>
 //
 //    This program is free software: you can redistribute it and/or modify
@@ -15,7 +15,7 @@
 //    You should have received a copy of the GNU General Public License
 //    along with this program.  If not, see <http://www.gnu.org/licenses/>
 
-package monorail
+package micro
 
 import (
 	"encoding/json"
@@ -40,8 +40,8 @@ var (
 /*               APP              */
 /**********************************/
 
-// Monorail represents an monorail application
-type Monorail struct {
+// Micro represents an micro application
+type Micro struct {
 	debug bool
 	*ControllerCollection
 	*EventEmitter
@@ -51,20 +51,20 @@ type Monorail struct {
 	errorHandlers  map[int]HandlerFunction
 }
 
-// New creates an monorail application
-func New() *Monorail {
-	monorail := &Monorail{
+// New creates an micro application
+func New() *Micro {
+	micro := &Micro{
 		ControllerCollection: NewControllerCollection(),
 		EventEmitter:         NewEventEmitter(),
 		injector:             NewInjector(),
 		errorHandlers:        map[int]HandlerFunction{},
 	}
-	monorail.injector.Register(monorail)
-	return monorail
+	micro.injector.Register(micro)
+	return micro
 }
 
 // Boot boots the application
-func (e *Monorail) Boot() {
+func (e *Micro) Boot() {
 	if !e.Booted() {
 		e.ControllerCollection.Flush()
 		e.booted = true
@@ -72,14 +72,14 @@ func (e *Monorail) Boot() {
 }
 
 // Booted returns true if the Boot function has been called
-func (e Monorail) Booted() bool {
+func (e Micro) Booted() bool {
 	return e.booted
 }
 
-// ServeHTTP boots monorail server and handles http requests.
+// ServeHTTP boots micro server and handles http requests.
 //
 // Can Panic!
-func (e *Monorail) ServeHTTP(responseWriter http.ResponseWriter, request *http.Request) {
+func (e *Micro) ServeHTTP(responseWriter http.ResponseWriter, request *http.Request) {
 	var (
 		matches                []*Route
 		next                   Next
@@ -120,7 +120,7 @@ func (e *Monorail) ServeHTTP(responseWriter http.ResponseWriter, request *http.R
 	matches = e.RequestMatcher.MatchAll(request)
 
 	// For the first matched route, call all its handlers
-	// if an handler in a route calls monorail.Next next() , execute the next handler
+	// if an handler in a route calls micro.Next next() , execute the next handler
 	// When all handlers of a route have been called
 	// if there are still some matched routes and the last handler of the previous route calls next
 	// then repeat the process for the next matched route
@@ -167,10 +167,10 @@ func (e *Monorail) ServeHTTP(responseWriter http.ResponseWriter, request *http.R
 }
 
 // Error sets an error handler given an error code.
-// Arguments of that handler function are resolved by monorail's injector.
+// Arguments of that handler function are resolved by micro's injector.
 //
 // Can Panic! if the error code is lower than 400.
-func (e *Monorail) Error(errorCode int, handlerFunc HandlerFunction) {
+func (e *Micro) Error(errorCode int, handlerFunc HandlerFunction) {
 	if e.Booted() {
 		return
 	}
@@ -181,7 +181,7 @@ func (e *Monorail) Error(errorCode int, handlerFunc HandlerFunction) {
 }
 
 // hasErrorCode Return true if a http status greater than 399 has been set
-func (e *Monorail) hasErrorCode(rw *ResponseWriterWithCode, injector *Injector) bool {
+func (e *Micro) hasErrorCode(rw *ResponseWriterWithCode, injector *Injector) bool {
 	if code := rw.Code(); code > 399 {
 		if e.errorHandlers[code] != nil && rw.Length() == 0 {
 			injector.MustApply(e.errorHandlers[code])
@@ -194,7 +194,7 @@ func (e *Monorail) hasErrorCode(rw *ResponseWriterWithCode, injector *Injector) 
 }
 
 // Injector return the injector
-func (e *Monorail) Injector() *Injector {
+func (e *Micro) Injector() *Injector {
 	return e.injector
 }
 
@@ -216,7 +216,7 @@ func NotFoundErrorHandler(rw http.ResponseWriter, r *http.Request) {
 /*            CONTEXT             */
 /**********************************/
 
-// Context represents a request context in an monorail application
+// Context represents a request context in an micro application
 type Context struct {
 	Request  *http.Request
 	Response http.ResponseWriter

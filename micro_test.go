@@ -1,5 +1,5 @@
-//    Monorail version 0.4
-//    Monorail is a web framework for the Go language
+//    Micro version 0.4
+//    Micro is a web framework for the Go language
 //    Copyright (C) 2015  mparaiso <mparaiso@online.fr>
 //
 //    This program is free software: you can redistribute it and/or modify
@@ -15,7 +15,7 @@
 //    You should have received a copy of the GNU General Public License
 //    along with this program.  If not, see <http://www.gnu.org/licenses/>
 
-package monorail_test
+package micro_test
 
 import (
 	"bytes"
@@ -30,7 +30,7 @@ import (
 	"testing"
 
 	"github.com/interactiv/expect"
-	"github.com/interactiv/monorail"
+	"github.com/interactiv/micro"
 )
 
 /********************************/
@@ -41,56 +41,56 @@ const formContentType = "application/x-www-form-urlencoded"
 
 func TestHelloWord(t *testing.T) {
 
-	app := monorail.New()
-	app.Get("/hello/:name", func(ctx *monorail.Context, rw http.ResponseWriter) {
+	app := micro.New()
+	app.Get("/hello/:name", func(ctx *micro.Context, rw http.ResponseWriter) {
 		fmt.Fprintf(rw, "Hello %s", ctx.RequestVars["name"])
 	})
 	server := httptest.NewServer(app)
 	defer server.Close()
-	res := monorail.MustWithResult(http.Get(server.URL + "/hello/foo")).(*http.Response)
+	res := micro.MustWithResult(http.Get(server.URL + "/hello/foo")).(*http.Response)
 	defer res.Body.Close()
 	expect.Expect(res.StatusCode, t).ToBe(200)
-	expect.Expect(string(monorail.MustWithResult(ioutil.ReadAll(res.Body)).([]byte)), t).ToBe("Hello foo")
+	expect.Expect(string(micro.MustWithResult(ioutil.ReadAll(res.Body)).([]byte)), t).ToBe("Hello foo")
 }
 
 func TestOptionalRequestVariable(t *testing.T) {
-	app := monorail.New()
+	app := micro.New()
 	e := expect.New(t)
-	app.Use("/", func(next monorail.Next) { next() })
-	app.Get("/:param?", func(ctx *monorail.Context) {
+	app.Use("/", func(next micro.Next) { next() })
+	app.Get("/:param?", func(ctx *micro.Context) {
 		ctx.WriteString("param: ", ctx.RequestVars["param"])
 	})
-	app.Get("/:param1?/:param2", func(ctx *monorail.Context) {
+	app.Get("/:param1?/:param2", func(ctx *micro.Context) {
 		ctx.WriteString(ctx.RequestVars["param1"], ctx.RequestVars["param2"])
 	})
 	server := httptest.NewServer(app)
 	defer server.Close()
-	res := monorail.MustWithResult(http.Get(server.URL + "/example")).(*http.Response)
+	res := micro.MustWithResult(http.Get(server.URL + "/example")).(*http.Response)
 	defer res.Body.Close()
 	e.Expect(res.StatusCode).ToBe(200)
-	body := string(monorail.MustWithResult(ioutil.ReadAll(res.Body)).([]byte))
+	body := string(micro.MustWithResult(ioutil.ReadAll(res.Body)).([]byte))
 	e.Expect(body).ToContain("example")
-	res = monorail.MustWithResult(http.Get(server.URL + "/")).(*http.Response)
+	res = micro.MustWithResult(http.Get(server.URL + "/")).(*http.Response)
 	defer res.Body.Close()
 	e.Expect(res.StatusCode).ToBe(200)
-	body = string(monorail.MustWithResult(ioutil.ReadAll(res.Body)).([]byte))
+	body = string(micro.MustWithResult(ioutil.ReadAll(res.Body)).([]byte))
 	e.Expect(body).Not().ToContain("example")
 	e.Expect(body).ToContain("param:")
-	res = monorail.MustWithResult(http.Get((server.URL + "/job/salary"))).(*http.Response)
+	res = micro.MustWithResult(http.Get((server.URL + "/job/salary"))).(*http.Response)
 	defer res.Body.Close()
 	e.Expect(res.StatusCode).ToBe(200)
-	body = string(monorail.MustWithResult(ioutil.ReadAll(res.Body)).([]byte))
+	body = string(micro.MustWithResult(ioutil.ReadAll(res.Body)).([]byte))
 	e.Expect(body).ToContain("job")
 	e.Expect(body).ToContain("salary")
-	res = monorail.MustWithResult(http.Get(server.URL + "/house/room/door")).(*http.Response)
+	res = micro.MustWithResult(http.Get(server.URL + "/house/room/door")).(*http.Response)
 	defer res.Body.Close()
 	e.Expect(res.StatusCode).ToBe(404)
-	//body =string(monorail.MustWithResult(ioutil.ReadAll(res.Body)).([]byte))
+	//body =string(micro.MustWithResult(ioutil.ReadAll(res.Body)).([]byte))
 }
 
 func TestPost(t *testing.T) {
 
-	app := monorail.New()
+	app := micro.New()
 	app.Get("/feedback", func() {
 		t.Fatalf("GET /feedback shouldn't be called on POST /feedback request")
 	})
@@ -115,10 +115,10 @@ func TestPost(t *testing.T) {
 
 func TestPut(t *testing.T) {
 
-	app := monorail.New()
+	app := micro.New()
 	id := "10"
 	e := expect.New(t)
-	app.Put("/blog/:id", func(ctx *monorail.Context) {
+	app.Put("/blog/:id", func(ctx *micro.Context) {
 		e.Expect(ctx.RequestVars["id"]).ToEqual(id)
 	})
 	req, err := http.NewRequest("PUT", fmt.Sprintf("http://foobar.com/blog/%s", id), nil)
@@ -129,11 +129,11 @@ func TestPut(t *testing.T) {
 
 func TestDelete(t *testing.T) {
 
-	app := monorail.New()
+	app := micro.New()
 	category := "food"
 	id := "200"
 	e := expect.New(t)
-	app.Delete("/category/:category/product/:id", func(ctx *monorail.Context) {
+	app.Delete("/category/:category/product/:id", func(ctx *micro.Context) {
 		e.Expect(ctx.RequestVars["category"]).ToEqual(category)
 		e.Expect(ctx.RequestVars["id"]).ToEqual(id)
 	})
@@ -146,7 +146,7 @@ func TestDelete(t *testing.T) {
 
 func TestMatch(t *testing.T) {
 	e := expect.New(t)
-	app := monorail.New()
+	app := micro.New()
 	app.All("/foo", func(rw http.ResponseWriter) {
 		rw.WriteHeader(http.StatusOK)
 	}).SetMethods([]string{"GET", "POST"})
@@ -177,9 +177,9 @@ func TestMatch(t *testing.T) {
 }
 
 func TestUse(t *testing.T) {
-	app := monorail.New()
+	app := micro.New()
 	e := expect.New(t)
-	app.Use("/", func(rw http.ResponseWriter, next monorail.Next) {
+	app.Use("/", func(rw http.ResponseWriter, next micro.Next) {
 		rw.Write([]byte("Use"))
 		next()
 	})
@@ -200,8 +200,8 @@ func TestUse(t *testing.T) {
 func TestConvert(t *testing.T) {
 
 	e := expect.New(t)
-	app := monorail.New()
-	app.Get("/person/:person", func(ctx *monorail.Context, rw http.ResponseWriter) {
+	app := micro.New()
+	app.Get("/person/:person", func(ctx *micro.Context, rw http.ResponseWriter) {
 		var person *Person
 		person = ctx.ConvertedRequestVars["person"].(*Person)
 		fmt.Fprintf(rw, "%s", person.name)
@@ -222,9 +222,9 @@ func TestConvert(t *testing.T) {
 }
 
 func TestAssert(t *testing.T) {
-	app := monorail.New()
+	app := micro.New()
 	e := expect.New(t)
-	app.Get("/movies/:id", func(ctx *monorail.Context) {
+	app.Get("/movies/:id", func(ctx *micro.Context) {
 		e.Expect(ctx.RequestVars["id"]).ToEqual("0123")
 	}).Assert("id", "\\d+")
 	server := httptest.NewServer(app)
@@ -242,14 +242,14 @@ func TestAssert(t *testing.T) {
 func TestIsCallable(t *testing.T) {
 	var f = func() {}
 	e := expect.New(t)
-	e.Expect(monorail.IsCallable(f)).ToBeTrue()
+	e.Expect(micro.IsCallable(f)).ToBeTrue()
 	foo := new(Foo)
-	e.Expect(monorail.IsCallable(foo.Call)).ToBeTrue()
+	e.Expect(micro.IsCallable(foo.Call)).ToBeTrue()
 }
 
 func TestInjector(t *testing.T) {
 	e := expect.New(t)
-	injector := monorail.NewInjector()
+	injector := micro.NewInjector()
 	injector.Register(&Foo{Bar: "bar"})
 	f, err := injector.Resolve(reflect.TypeOf((*Foo)(nil)))
 	e.Expect(err).ToBeNil()
@@ -268,7 +268,7 @@ func TestInjector(t *testing.T) {
 }
 
 func TestBind(t *testing.T) {
-	r := monorail.NewRoute("/post/new")
+	r := micro.NewRoute("/post/new")
 	r.SetName("new_post")
 	expect.Expect(r.Name(), t).ToBe("new_post")
 }
@@ -276,15 +276,15 @@ func TestBind(t *testing.T) {
 func TestError(t *testing.T) {
 	e := expect.New(t)
 	e.Expect(func() {
-		app := monorail.New()
+		app := micro.New()
 		app.Error(100, func() {})
 	}).ToPanic()
 }
 
-func TestmonorailError404(t *testing.T) {
+func TestmicroError404(t *testing.T) {
 	const errorMessage = "Route %v Not Found"
 	const testRoute = "/foo/bar"
-	app := monorail.New()
+	app := micro.New()
 	e := expect.New(t)
 	app.Error(404, func(rw http.ResponseWriter, r *http.Request) {
 		rw.WriteHeader(http.StatusNotFound)
@@ -302,9 +302,9 @@ func TestmonorailError404(t *testing.T) {
 
 }
 
-func TestmonorailError500(t *testing.T) {
+func TestmicroError500(t *testing.T) {
 	e := expect.New(t)
-	app := monorail.New()
+	app := micro.New()
 	app.Get("/", func(foo *Foo) {})
 	app.Error(500, func(rw http.ResponseWriter) {
 		http.Error(rw, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
@@ -317,14 +317,14 @@ func TestmonorailError500(t *testing.T) {
 	e.Expect(res.StatusCode).ToEqual(500)
 }
 
-func TestmonorailError401(t *testing.T) {
+func TestmicroError401(t *testing.T) {
 	const (
 		notAuthorizedMessage = "Not Authorized"
 		notAuthorizedRoute   = "/notauthorized"
 	)
 	e := expect.New(t)
-	app := monorail.New()
-	app.Get(notAuthorizedRoute, func(rw http.ResponseWriter, next monorail.Next) {
+	app := micro.New()
+	app.Get(notAuthorizedRoute, func(rw http.ResponseWriter, next micro.Next) {
 		rw.WriteHeader(http.StatusUnauthorized)
 		next()
 	})
@@ -337,12 +337,12 @@ func TestmonorailError401(t *testing.T) {
 	defer res.Body.Close()
 	e.Expect(err).ToBeNil()
 	e.Expect(res.StatusCode).ToEqual(401)
-	body := string(monorail.MustWithResult(ioutil.ReadAll(res.Body)).([]byte))
+	body := string(micro.MustWithResult(ioutil.ReadAll(res.Body)).([]byte))
 	e.Expect(body).ToEqual(notAuthorizedMessage)
 }
 
-// TestMonorailRouteMatchers test the new route matcher api
-func TestMonorailRouteMatchers(t *testing.T) {
+// TestMicroRouteMatchers test the new route matcher api
+func TestMicroRouteMatchers(t *testing.T) {
 	e := expect.New(t)
 	requests := map[string]*http.Request{
 		"GET":  &http.Request{Method: "GET"},
@@ -350,12 +350,12 @@ func TestMonorailRouteMatchers(t *testing.T) {
 		"HEAD": &http.Request{Method: "HEAD"},
 		"POST": &http.Request{Method: "POST"},
 	}
-	methodMatcher := monorail.NewMethodMatcher()
+	methodMatcher := micro.NewMethodMatcher()
 	for _, request := range requests {
 		e.Expect(methodMatcher.Match(request)).ToBeTrue()
 	}
 
-	methodMatcher = monorail.NewMethodMatcher("GET", "HEAD")
+	methodMatcher = micro.NewMethodMatcher("GET", "HEAD")
 	e.Expect(methodMatcher.Match(requests["GET"])).ToBeTrue()
 	e.Expect(methodMatcher.Match(requests["HEAD"])).ToBeTrue()
 	e.Expect(methodMatcher.Match(requests["POST"])).Not().ToBeTrue()
@@ -366,18 +366,18 @@ func TestMonorailRouteMatchers(t *testing.T) {
 func TestPrefix(t *testing.T) {
 	const message = "example"
 	e := expect.New(t)
-	app := monorail.New()
-	routeCollection := monorail.NewControllerCollection()
+	app := micro.New()
+	routeCollection := micro.NewControllerCollection()
 	routeCollection.All("/"+message, func(rw http.ResponseWriter) {
 		rw.Write([]byte(message))
 	})
 	app.Mount("/", routeCollection)
 	server := httptest.NewServer(app)
 	defer server.Close()
-	response := monorail.MustWithResult(http.Get(server.URL + "/" + message)).(*http.Response)
+	response := micro.MustWithResult(http.Get(server.URL + "/" + message)).(*http.Response)
 	defer response.Body.Close()
 	e.Expect(response.StatusCode).ToEqual(200)
-	body := string(monorail.MustWithResult(ioutil.ReadAll(response.Body)).([]byte))
+	body := string(micro.MustWithResult(ioutil.ReadAll(response.Body)).([]byte))
 	e.Expect(body).ToEqual(message)
 }
 
@@ -387,7 +387,7 @@ func TestPrefix(t *testing.T) {
 func TestEventEmitter(t *testing.T) {
 	var called int
 	e := expect.New(t)
-	em := monorail.NewEventEmitter()
+	em := micro.NewEventEmitter()
 	listener := func(event string, arguments ...interface{}) bool {
 		called = called + 1
 		return true
@@ -412,8 +412,8 @@ func TestEventEmitter(t *testing.T) {
 /**********************************/
 
 func TestAddRoute(t *testing.T) {
-	rc := monorail.NewControllerCollection()
-	route := monorail.NewRoute("/")
+	rc := micro.NewControllerCollection()
+	route := micro.NewRoute("/")
 	rc.AddRoute(route)
 	e := expect.New(t)
 	e.Expect(len(rc.Routes)).ToBe(1)
@@ -421,18 +421,18 @@ func TestAddRoute(t *testing.T) {
 
 func TestRouteCollectionMount(t *testing.T) {
 	e := expect.New(t)
-	app := monorail.New()
-	subRoutes := monorail.NewControllerCollection()
-	subRoutes.Use("/", func(ctx *monorail.Context, next monorail.Next) {
+	app := micro.New()
+	subRoutes := micro.NewControllerCollection()
+	subRoutes.Use("/", func(ctx *micro.Context, next micro.Next) {
 		ctx.WriteString("Use")
 		next()
 	})
-	subRoutes.All("/", func(ctx *monorail.Context) {
+	subRoutes.All("/", func(ctx *micro.Context) {
 		ctx.WriteString("SubRoutes")
 	})
 	app.Mount("/subroutes", subRoutes)
-	subRoutes2 := monorail.NewControllerCollection()
-	subRoutes2.All("/", func(ctx *monorail.Context) {
+	subRoutes2 := micro.NewControllerCollection()
+	subRoutes2.All("/", func(ctx *micro.Context) {
 		ctx.WriteString("SubSubRoutes")
 	})
 	subRoutes.Mount("/subroutes", subRoutes2)
@@ -459,7 +459,7 @@ func TestRouteCollectionMount(t *testing.T) {
 func TestContextReadJson(t *testing.T) {
 	e := expect.New(t)
 	response := httptest.NewRecorder()
-	context := monorail.NewContext(response, nil)
+	context := micro.NewContext(response, nil)
 	type Account struct {
 		Balance float32
 	}
@@ -468,11 +468,11 @@ func TestContextReadJson(t *testing.T) {
 	e.Expect(response.Header().Get("Content-Type")).ToBe("application/json")
 	e.Expect(response.Body.String()).ToContain(`{"Balance":1000}`)
 	req, _ := http.NewRequest("GET", "example.com", strings.NewReader(`{"Balance":500}`))
-	context = monorail.NewContext(nil, req)
+	context = micro.NewContext(nil, req)
 	context.ReadJSON(account)
 	e.Expect(account.Balance).ToEqual(float32(500))
 	response = httptest.NewRecorder()
-	context = monorail.NewContext(response, nil)
+	context = micro.NewContext(response, nil)
 	context.WriteString("foo", "bar")
 	e.Expect(response.Body.String()).ToEqual("foobar")
 }
@@ -485,7 +485,7 @@ func TestMustWithResult(t *testing.T) {
 	b := func() (*Foo, error) {
 		return new(Foo), nil
 	}
-	_ = monorail.MustWithResult(b()).(*Foo)
+	_ = micro.MustWithResult(b()).(*Foo)
 }
 
 /********************************/

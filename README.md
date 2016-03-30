@@ -1,6 +1,6 @@
-#Monorail
+#Micro
 
-[![Build Status](https://travis-ci.org/interactiv/monorail.svg?branch=master)](https://travis-ci.org/interactiv/monorail) [![Circle CI](https://circleci.com/gh/interactiv/monorail.svg?style=svg)](https://circleci.com/gh/interactiv/monorail) [![GoDoc](https://godoc.org/github.com/interactiv/monorail?status.svg)](https://godoc.org/github.com/interactiv/monorail) [![Coverage](http://gocover.io/_badge/github.com/interactiv/monorail?0)](http://gocover.io/github.com/interactiv/monorail)
+[![Build Status](https://travis-ci.org/interactiv/micro.svg?branch=master)](https://travis-ci.org/interactiv/micro) [![Circle CI](https://circleci.com/gh/interactiv/micro.svg?style=svg)](https://circleci.com/gh/interactiv/micro) [![GoDoc](https://godoc.org/github.com/interactiv/micro?status.svg)](https://godoc.org/github.com/interactiv/micro) [![Coverage](http://gocover.io/_badge/github.com/interactiv/micro?0)](http://gocover.io/github.com/interactiv/micro)
 
 awesome nano webframework for Go
 	
@@ -17,7 +17,7 @@ version: 0.4
 	
 	package main
 	
-	import "github.com/interactiv/monorail"
+	import "github.com/interactiv/micro"
 	import "net/http"
 	import "log"
 	import "time"
@@ -26,17 +26,17 @@ version: 0.4
 		
 		addr:=":3000"
 		
-		app:=monorail.New()
+		app:=micro.New()
 		
 		// creates a middleware that will be called on each request matching /(.*) path
-		app.Use("/",func(next monorail.Next){
+		app.Use("/",func(next micro.Next){
 			t0:=time.Now()
 			next()
 			log.Println("lapse: ",time.Now().Sub(t0))
 		})
 		
 		// creates a route handler with a route variable
-		app.Get("/greet/:name",func(ctx *monorail.Context,rw http.ReponseWriter){
+		app.Get("/greet/:name",func(ctx *micro.Context,rw http.ReponseWriter){
 			rw.Write([]byte("Hello "+ctx.RequestVars["name"]))
 		})
 		
