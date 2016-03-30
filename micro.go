@@ -138,26 +138,7 @@ func (e *Micro) ServeHTTP(responseWriter http.ResponseWriter, request *http.Requ
 		for i, matchedParam := range match.pattern.FindStringSubmatch(request.URL.Path)[1:] {
 			context.RequestVars[match.params[i]] = matchedParam
 		}
-		// Apply request parameter converters
-		for key, value := range context.RequestVars {
-			if match.converters[key] != nil {
-				converterInjector := NewInjector(value)
-				converterInjector.SetParent(requestInjector)
-				res := converterInjector.MustApply(match.converters[key])
-				if e.hasErrorCode(responseWriterWithCode, requestInjector) {
-					return
-				}
-				if len(res) > 0 {
-					// if only 1 value is returned , assign the value
-					if len(res) == 1 {
-						context.ConvertedRequestVars[key] = res[0]
-						// if multiple values are returned , assign the array of values
-					} else {
-						context.ConvertedRequestVars[key] = res
-					}
-				}
-			}
-		}
+
 		requestInjector.Register(next)
 		context.next = next
 		requestInjector.MustApply(match.Handler())
@@ -222,7 +203,6 @@ type Context struct {
 	Response http.ResponseWriter
 	// RequestVars are variables extracted from the request
 	RequestVars          map[string]string
-	ConvertedRequestVars map[string]interface{}
 	//  Vars is a map to store any data during the request response cycle
 	Vars map[string]interface{}
 	next Next
@@ -232,7 +212,6 @@ type Context struct {
 func NewContext(response http.ResponseWriter, request *http.Request) *Context {
 	ctx := &Context{
 		RequestVars:          map[string]string{},
-		ConvertedRequestVars: map[string]interface{}{},
 		Vars:                 map[string]interface{}{},
 		Request:              request,
 		Response:             response,
@@ -303,7 +282,6 @@ type Route struct {
 	handlerFunc HandlerFunction
 	params      []string
 	frozen      bool
-	converters  map[string]interface{}
 	assertions  map[string]string
 	attributes  map[string]interface{}
 	// name is the route's name
@@ -318,7 +296,6 @@ func NewRoute(path string) *Route {
 	return &Route{
 		methods:     []string{},
 		params:      []string{},
-		converters:  map[string]interface{}{},
 		assertions:  map[string]string{},
 		attributes:  map[string]interface{}{},
 		path:        path,
@@ -464,21 +441,6 @@ func (r *Route) SetMethods(methods []string) {
 		return
 	}
 	r.methods = methods
-}
-
-type conversionFunction interface{}
-
-// Convert converts a string value using a converter function. Arguments of
-// the converter function will be injected according to their type. The initial value
-// is injected as a string.
-//
-// Can Panic!
-func (r *Route) Convert(param string, converterFunc conversionFunction) *Route {
-	if !r.IsFrozen() {
-		MustBeCallable(converterFunc)
-		r.converters[param] = converterFunc
-	}
-	return r
 }
 
 // Assert asserts that a route variable respects a given regexp pattern.
@@ -674,105 +636,7 @@ func (rm *RequestMatcher) MatchAll(request *http.Request) (matches []*Route) {
 	return
 }
 
-/**********************************/
-/*            INJECTOR            */
-/**********************************/
 
-// Injector is a dependency injection container
-// Based on types.
-type Injector struct {
-	services map[reflect.Type]interface{}
-	parent   *Injector
-}
-
-// NewInjector returns an new Injector
-func NewInjector(services ...interface{}) *Injector {
-	injector := &Injector{services: map[reflect.Type]interface{}{}}
-	for _, service := range services {
-		injector.Register(service)
-	}
-	return injector
-}
-
-// Register registers a new service to the injector
-func (i *Injector) Register(service interface{}) {
-	i.services[reflect.ValueOf(service).Type()] = service
-}
-
-// RegisterWithType registers a new service to the injector with a given type
-func (i *Injector) RegisterWithType(service interface{}, Type interface{}) {
-	if !reflect.TypeOf(service).ConvertibleTo(reflect.TypeOf(Type)) {
-		panic(fmt.Sprint(service, " is not convertible to ", Type))
-	}
-	i.services[reflect.TypeOf(Type)] = service
-}
-
-// Resolve fetch the value according to a registered type
-func (i *Injector) Resolve(someType reflect.Type) (interface{}, error) {
-	var (
-		err     error
-		service interface{}
-	)
-	for typeService, service := range i.services {
-		if typeService == someType {
-			return service, nil
-		} else if someType.Kind() == reflect.Interface && typeService.Implements(someType) {
-			return service, nil
-		} else if someType.Kind() == reflect.Ptr && someType.Elem().Kind() == reflect.Interface && typeService.Implements(someType.Elem()) {
-			return service, nil
-		}
-	}
-	if service == nil && i.parent != nil && i.parent != i {
-		service, err = i.parent.Resolve(someType)
-	}
-	if service == nil {
-		err = fmt.Errorf("service with type %v cannot be injected : not found", someType)
-	}
-	return service, err
-}
-
-// Apply applies resolved values to the given function
-func (i *Injector) Apply(function interface{}) ([]interface{}, error) {
-	var err error
-	if !IsCallable(function) {
-		return nil, fmt.Errorf("%v is not a function or a method\r\n%s", function, debug.Stack())
-	}
-	arguments := []reflect.Value{}
-	callableValue := reflect.ValueOf(function)
-	for j := 0; j < callableValue.Type().NumIn(); j++ {
-		argument, err := i.Resolve(callableValue.Type().In(j))
-		if err != nil {
-			return nil, err
-		}
-		arguments = append(arguments, reflect.ValueOf(argument))
-	}
-	results := callableValue.Call(arguments)
-
-	out := []interface{}{}
-	for _, result := range results {
-		out = append(out, result.Interface())
-	}
-	return out, err
-}
-
-// MustApply is the "can panic" version of MustApply
-func (i *Injector) MustApply(function interface{}) (results []interface{}) {
-	results, err := i.Apply(function)
-	if err != nil {
-		panic(err)
-	}
-	return
-}
-
-// SetParent sets the injector's parent
-func (i *Injector) SetParent(parent *Injector) {
-	i.parent = parent
-}
-
-// Parent gets the injector's parent
-func (i Injector) Parent() *Injector {
-	return i.parent
-}
 
 /**********************************/
 /*         EVENT EMITTER          */
